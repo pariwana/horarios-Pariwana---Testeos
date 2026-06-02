@@ -1,0 +1,140 @@
+{% extends "webui/base.html" %}
+{% block title %}Turnos AUTO - Pariwana Scheduler{% endblock %}
+{% block content %}
+  <section class="panel">
+    <h3 style="margin-top: 0;">Turnos AUTO detectados</h3>
+    <form method="get" action="/app/shifts-auto/" style="display:flex; gap:8px; align-items:end; flex-wrap:wrap; margin-bottom:10px;">
+      <div>
+        <label>Buscar</label>
+        <input type="text" name="q" value="{{ filter_q }}" placeholder="nombre, codigo o area">
+      </div>
+      <div>
+        <label>Area</label>
+        <select name="area_id">
+          <option value="">Todas</option>
+          {% for area in area_options %}
+            <option value="{{ area.id }}" {% if filter_area_id == area.id %}selected{% endif %}>{{ area.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label>Estado</label>
+        <select name="active">
+          <option value="all" {% if filter_active == "all" %}selected{% endif %}>Todos</option>
+          <option value="active" {% if filter_active == "active" %}selected{% endif %}>Activos</option>
+          <option value="inactive" {% if filter_active == "inactive" %}selected{% endif %}>Inactivos</option>
+        </select>
+      </div>
+      <button class="primary" type="submit">Filtrar</button>
+    </form>
+    {% if can_manage_shifts %}
+      <form method="post" action="/app/shifts-auto/" style="margin-bottom:10px;">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="normalize_visible_auto_shifts">
+        <input type="hidden" name="q" value="{{ filter_q }}">
+        <input type="hidden" name="filter_area_id" value="{{ filter_area_id|default:'' }}">
+        <input type="hidden" name="filter_active" value="{{ filter_active }}">
+        <button class="primary" type="submit">Normalizar turnos AUTO visibles</button>
+      </form>
+    {% endif %}
+    {% if rows %}
+      <table>
+        <thead>
+          <tr>
+            <th>Area</th>
+            <th>Nombre</th>
+            <th>Codigo BUK</th>
+            <th>Horario</th>
+            <th>Impacto</th>
+            <th>Nocturno</th>
+            <th>Activo</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td>{{ row.shift.area.name }}</td>
+              <td>{{ row.shift.name }}</td>
+              <td>{{ row.shift.buk_code }}</td>
+              <td>{{ row.shift.start_time|time:"H:i" }} - {{ row.shift.end_time|time:"H:i" }}</td>
+              <td>
+                {{ row.impact.assignments }} asignaciones<br>
+                {% if row.impact.first_date %}
+                  <span class="muted">{{ row.impact.first_date|date:"Y-m-d" }} a {{ row.impact.last_date|date:"Y-m-d" }}</span>
+                {% else %}
+                  <span class="muted">Sin asignaciones</span>
+                {% endif %}
+              </td>
+              <td>{% if row.shift.is_night_shift %}Si{% else %}No{% endif %}</td>
+              <td>{% if row.shift.active %}Si{% else %}No{% endif %}</td>
+              <td>
+                {% if can_manage_shifts %}
+                  <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                    <form method="post" action="/app/shifts-auto/" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                      {% csrf_token %}
+                      <input type="hidden" name="action" value="update_auto_shift">
+                      <input type="hidden" name="q" value="{{ filter_q }}">
+                      <input type="hidden" name="filter_area_id" value="{{ filter_area_id|default:'' }}">
+                      <input type="hidden" name="filter_active" value="{{ filter_active }}">
+                      <input type="hidden" name="shift_id" value="{{ row.shift.id }}">
+                      <input type="text" name="name" value="{{ row.shift.name }}" required>
+                      <input type="text" name="buk_code" value="{{ row.shift.buk_code }}" required>
+                      <label style="display:flex; gap:4px; align-items:center; margin:0;">
+                        <input type="checkbox" name="is_night_shift" {% if row.shift.is_night_shift %}checked{% endif %}>
+                        Noche
+                      </label>
+                      <label style="display:flex; gap:4px; align-items:center; margin:0;">
+                        <input type="checkbox" name="active" {% if row.shift.active %}checked{% endif %}>
+                        Activo
+                      </label>
+                      <button type="submit">Guardar</button>
+                    </form>
+                    <form method="post" action="/app/shifts-auto/">
+                      {% csrf_token %}
+                      <input type="hidden" name="action" value="deactivate_auto_shift">
+                      <input type="hidden" name="q" value="{{ filter_q }}">
+                      <input type="hidden" name="filter_area_id" value="{{ filter_area_id|default:'' }}">
+                      <input type="hidden" name="filter_active" value="{{ filter_active }}">
+                      <input type="hidden" name="shift_id" value="{{ row.shift.id }}">
+                      <button type="submit">Desactivar</button>
+                    </form>
+                    <form method="post" action="/app/shifts-auto/" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                      {% csrf_token %}
+                      <input type="hidden" name="action" value="merge_auto_shift">
+                      <input type="hidden" name="q" value="{{ filter_q }}">
+                      <input type="hidden" name="filter_area_id" value="{{ filter_area_id|default:'' }}">
+                      <input type="hidden" name="filter_active" value="{{ filter_active }}">
+                      <input type="hidden" name="shift_id" value="{{ row.shift.id }}">
+                      <select name="destination_shift_id" required>
+                        <option value="">Fusionar a...</option>
+                        {% for target in row.merge_options %}
+                          <option value="{{ target.id }}">{{ target.name }} ({{ target.buk_code }})</option>
+                        {% endfor %}
+                      </select>
+                      <select name="source_mode">
+                        <option value="deactivate">desactivar origen</option>
+                        <option value="keep">mantener origen</option>
+                        <option value="delete">eliminar origen</option>
+                      </select>
+                      {% if row.impact.assignments >= 20 %}
+                        <input type="text" name="merge_confirm_text" placeholder="CONFIRMAR (alto impacto)">
+                      {% else %}
+                        <input type="hidden" name="merge_confirm_text" value="">
+                      {% endif %}
+                      <button type="submit">Fusionar</button>
+                    </form>
+                  </div>
+                {% else %}
+                  <span class="muted">Solo lectura</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">No hay turnos AUTO para esta sede.</p>
+    {% endif %}
+  </section>
+{% endblock %}

@@ -1,5 +1,6 @@
 from django.test import TestCase
 
+from apps.audit.models import AuditLog
 from apps.month_closure.models import MonthClosureStatus
 from apps.month_closure.services import MonthClosureService
 from apps.tenants.models import Property, Tenant
@@ -21,6 +22,15 @@ class MonthClosureServiceTests(TestCase):
             user=self.user,
         )
         self.assertEqual(closure.status, MonthClosureStatus.CLOSED)
+        self.assertTrue(
+            AuditLog.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                user=self.user,
+                action="month_close",
+                entity_type="MonthClosure",
+            ).exists()
+        )
 
         closure = MonthClosureService.reopen_month(
             tenant=self.tenant,
@@ -30,3 +40,12 @@ class MonthClosureServiceTests(TestCase):
             user=self.user,
         )
         self.assertEqual(closure.status, MonthClosureStatus.OPEN)
+        self.assertTrue(
+            AuditLog.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                user=self.user,
+                action="month_reopen",
+                entity_type="MonthClosure",
+            ).exists()
+        )

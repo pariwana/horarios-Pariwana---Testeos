@@ -1,0 +1,71 @@
+{% extends "webui/base.html" %}
+{% block title %}Sedes - Pariwana Scheduler{% endblock %}
+{% block content %}
+  <section class="panel" style="margin-bottom: 12px;">
+    <h3 style="margin-top: 0;">Crear sede</h3>
+    <form method="post" action="/app/properties/" style="display:flex; gap:8px; align-items:end; flex-wrap:wrap;">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="create_property">
+      <div>
+        <label>Nombre</label>
+        <input type="text" name="name" required>
+      </div>
+      <div>
+        <label>Slug (opcional)</label>
+        <input type="text" name="slug" placeholder="se-genera-si-vacio">
+      </div>
+      <div>
+        <label>Ubicacion</label>
+        <input type="text" name="location">
+      </div>
+      <div>
+        <label>Estado</label>
+        <select name="status">
+          <option value="active">active</option>
+          <option value="inactive">inactive</option>
+        </select>
+      </div>
+      <button class="primary" type="submit">Crear sede</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h3 style="margin-top: 0;">Sedes del tenant</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>Nombre</th>
+          <th>Slug</th>
+          <th>Ubicacion</th>
+          <th>Estado</th>
+          <th>Accion</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in rows %}
+          <tr>
+            <td colspan="5">
+              <form method="post" action="/app/properties/" style="display:grid; gap:8px; grid-template-columns: 1.2fr 1fr 1fr 140px 120px;">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="update_property">
+                <input type="hidden" name="property_id" value="{{ item.id }}">
+                <input type="text" name="name" value="{{ item.name }}" required>
+                <input type="text" name="slug" value="{{ item.slug }}" required>
+                <input type="text" name="location" value="{{ item.location }}">
+                <select name="status">
+                  <option value="active" {% if item.status == "active" %}selected{% endif %}>active</option>
+                  <option value="inactive" {% if item.status == "inactive" %}selected{% endif %}>inactive</option>
+                </select>
+                <button type="submit">Guardar</button>
+              </form>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="5" class="muted">No hay sedes registradas para este tenant.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endblock %}

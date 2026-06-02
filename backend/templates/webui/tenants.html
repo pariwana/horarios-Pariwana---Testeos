@@ -1,0 +1,139 @@
+{% extends "webui/base.html" %}
+{% block title %}Tenants - Pariwana Scheduler{% endblock %}
+{% block content %}
+  <style>
+    .tenant-form-grid {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr 140px;
+      gap: 10px;
+      align-items: end;
+    }
+    .tenant-settings {
+      grid-column: 1 / -1;
+    }
+    .tenant-list {
+      display: grid;
+      gap: 12px;
+    }
+    .tenant-card {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 12px;
+      background: #fff;
+    }
+    .tenant-card-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 10px;
+      align-items: center;
+    }
+    .tenant-status {
+      border-radius: 999px;
+      padding: 4px 8px;
+      font-size: 12px;
+      font-weight: 700;
+      background: #e5e7eb;
+    }
+    .tenant-status.is-active {
+      color: #134e4a;
+      background: #ccfbf1;
+    }
+    .tenant-status.is-inactive {
+      color: #7f1d1d;
+      background: #fee2e2;
+    }
+    textarea {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px;
+      width: 100%;
+      font-family: Consolas, monospace;
+      min-height: 90px;
+      resize: vertical;
+    }
+    @media (max-width: 720px) {
+      .tenant-form-grid { grid-template-columns: 1fr; }
+      .tenant-settings { grid-column: auto; }
+      .tenant-card-header { align-items: flex-start; flex-direction: column; }
+    }
+  </style>
+
+  <section class="panel" style="margin-bottom: 12px;">
+    <h3 style="margin-top: 0;">Crear tenant</h3>
+    <form method="post" action="/app/tenants/" class="tenant-form-grid">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="create_tenant">
+      <div>
+        <label>Nombre</label>
+        <input type="text" name="name" required>
+      </div>
+      <div>
+        <label>Slug (opcional)</label>
+        <input type="text" name="slug" placeholder="se-genera-si-vacio">
+      </div>
+      <div>
+        <label>Estado</label>
+        <select name="status">
+          <option value="active">Activo</option>
+          <option value="inactive">Inactivo</option>
+        </select>
+      </div>
+      <div class="tenant-settings">
+        <label>Settings JSON</label>
+        <textarea name="settings">{}</textarea>
+      </div>
+      <div>
+        <button class="primary" type="submit">Crear tenant</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h3 style="margin-top: 0;">Tenants registrados</h3>
+    <div class="tenant-list">
+      {% for item in rows %}
+        <article class="tenant-card">
+          <div class="tenant-card-header">
+            <div>
+              <strong>{{ item.name }}</strong>
+              <div class="muted">{{ item.slug }}</div>
+            </div>
+            <span class="tenant-status {% if item.status == "active" %}is-active{% else %}is-inactive{% endif %}">
+              {% if item.status == "active" %}Activo{% else %}Inactivo{% endif %}
+            </span>
+          </div>
+          <form method="post" action="/app/tenants/" class="tenant-form-grid">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="update_tenant">
+            <input type="hidden" name="tenant_id" value="{{ item.id }}">
+            <div>
+              <label>Nombre</label>
+              <input type="text" name="name" value="{{ item.name }}" required>
+            </div>
+            <div>
+              <label>Slug</label>
+              <input type="text" name="slug" value="{{ item.slug }}" required>
+            </div>
+            <div>
+              <label>Estado</label>
+              <select name="status">
+                <option value="active" {% if item.status == "active" %}selected{% endif %}>Activo</option>
+                <option value="inactive" {% if item.status == "inactive" %}selected{% endif %}>Inactivo</option>
+              </select>
+            </div>
+            <div class="tenant-settings">
+              <label>Settings JSON</label>
+              <textarea name="settings">{{ item.settings_json }}</textarea>
+            </div>
+            <div>
+              <button type="submit">Guardar</button>
+            </div>
+          </form>
+        </article>
+      {% empty %}
+        <p class="muted">No hay tenants registrados.</p>
+      {% endfor %}
+    </div>
+  </section>
+{% endblock %}

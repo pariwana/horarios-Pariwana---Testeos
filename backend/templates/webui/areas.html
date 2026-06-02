@@ -1,0 +1,176 @@
+{% extends "webui/base.html" %}
+{% block title %}Areas - Pariwana Scheduler{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1>Areas</h1>
+      <p class="compact-note">Administra las areas operativas de la sede.</p>
+    </div>
+    {% if can_manage_areas %}
+      <div class="page-actions">
+        <button class="primary" type="button" data-open-modal="area-create-modal">+ Añadir area</button>
+      </div>
+    {% endif %}
+  </div>
+
+  <section class="panel ops-list">
+    <h3 style="margin-top: 0;">Areas creadas</h3>
+    {% if rows %}
+      <table class="ops-table desktop-table">
+        <thead>
+          <tr>
+            <th>Area</th>
+            <th>Tipo</th>
+            <th>Trabajadores</th>
+            <th>Turnos</th>
+            <th>Estado</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td><div class="row-title">{{ row.area.name }}</div></td>
+              <td>{{ row.area.type|default:"-" }}</td>
+              <td>{{ row.active_workers }}</td>
+              <td>{{ row.active_shifts }}</td>
+              <td>{% if row.area.active %}<span class="badge badge-ok">Activa</span>{% else %}<span class="badge badge-muted">Inactiva</span>{% endif %}</td>
+              <td>
+                {% if can_manage_areas %}
+                  <span class="icon-actions">
+                    <button class="icon-button" type="button" data-open-modal="area-edit-modal-{{ row.area.id }}" title="Editar area">&#9998;</button>
+                    {% if row.area.active %}
+                      <button class="icon-button danger" type="button" data-open-modal="area-delete-modal-{{ row.area.id }}" title="Desactivar area">&#10005;</button>
+                    {% endif %}
+                  </span>
+                {% else %}
+                  <span class="muted">Solo lectura</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <div class="mobile-cards">
+        {% for row in rows %}
+          <article class="mobile-card">
+            <div class="mobile-card-header">
+              <div>
+                <div class="row-title">{{ row.area.name }}</div>
+                <div class="row-subtitle">{{ row.area.type|default:"Sin tipo" }}</div>
+              </div>
+              {% if row.area.active %}<span class="badge badge-ok">Activa</span>{% else %}<span class="badge badge-muted">Inactiva</span>{% endif %}
+            </div>
+            <div class="mobile-card-meta">
+              <span class="badge">{{ row.active_workers }} trabajadores</span>
+              <span class="badge">{{ row.active_shifts }} turnos</span>
+            </div>
+            {% if can_manage_areas %}
+              <div class="icon-actions">
+                <button class="icon-button" type="button" data-open-modal="area-edit-modal-{{ row.area.id }}" title="Editar area">&#9998;</button>
+                {% if row.area.active %}
+                  <button class="icon-button danger" type="button" data-open-modal="area-delete-modal-{{ row.area.id }}" title="Desactivar area">&#10005;</button>
+                {% endif %}
+              </div>
+            {% endif %}
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="muted">No hay areas en la sede seleccionada.</p>
+    {% endif %}
+  </section>
+
+  {% if can_manage_areas %}
+    <dialog class="modal-dialog" id="area-create-modal">
+      <div class="modal-header">
+        <h3>Añadir area</h3>
+        <button class="modal-close" type="button" data-close-modal>&times;</button>
+      </div>
+      <div class="modal-body">
+        <form method="post" class="stack">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="create_area">
+          {% for field in form %}
+            <div>
+              <label>{{ field.label }}</label>
+              {{ field }}
+              {% if field.errors %}<div class="error">{{ field.errors|join:", " }}</div>{% endif %}
+            </div>
+          {% endfor %}
+          <div class="modal-actions">
+            <button type="button" data-close-modal>Cancelar</button>
+            <button class="primary" type="submit">Guardar area</button>
+          </div>
+        </form>
+      </div>
+    </dialog>
+
+    {% for row in rows %}
+      <dialog class="modal-dialog" id="area-edit-modal-{{ row.area.id }}">
+        <div class="modal-header">
+          <h3>Editar area</h3>
+          <button class="modal-close" type="button" data-close-modal>&times;</button>
+        </div>
+        <div class="modal-body">
+          <form method="post" class="stack">
+            {% csrf_token %}
+            <input type="hidden" name="area_id" value="{{ row.area.id }}">
+            <input type="hidden" name="action" value="update_area">
+            <div>
+              <label>Nombre</label>
+              <input type="text" name="name" value="{{ row.area.name }}" required>
+            </div>
+            <div>
+              <label>Tipo</label>
+              <input type="text" name="type" value="{{ row.area.type }}">
+            </div>
+            <label style="display:flex; gap:8px; align-items:center;">
+              <input type="checkbox" name="active" {% if row.area.active %}checked{% endif %}>
+              Activa
+            </label>
+            <div class="modal-actions">
+              <button type="button" data-close-modal>Cancelar</button>
+              <button class="primary" type="submit">Guardar cambios</button>
+            </div>
+          </form>
+        </div>
+      </dialog>
+
+      <dialog class="modal-dialog modal-danger" id="area-delete-modal-{{ row.area.id }}">
+        <div class="modal-header">
+          <h3>Desactivar area</h3>
+          <button class="modal-close" type="button" data-close-modal>&times;</button>
+        </div>
+        <div class="modal-body">
+          <form method="post" class="stack">
+            {% csrf_token %}
+            <input type="hidden" name="area_id" value="{{ row.area.id }}">
+            <p>
+              Vas a desactivar <strong>{{ row.area.name }}</strong>.
+              {% if row.has_dependencies %}Tiene trabajadores o turnos activos y requiere reasignacion.{% endif %}
+            </p>
+            {% if row.has_dependencies %}
+              <div>
+                <label>Reasignar trabajadores y turnos a</label>
+                <select name="replacement_area_id" required>
+                  <option value="">Seleccionar area destino</option>
+                  {% for option in area_options %}
+                    {% if option.id != row.area.id %}
+                      <option value="{{ option.id }}">{{ option.name }}</option>
+                    {% endif %}
+                  {% endfor %}
+                </select>
+              </div>
+            {% endif %}
+            <div class="modal-actions">
+              <button type="button" data-close-modal>Cancelar</button>
+              <button class="icon-button danger" style="width:auto; padding:8px 12px;" type="submit" name="action" value="deactivate_area">Desactivar</button>
+            </div>
+          </form>
+        </div>
+      </dialog>
+    {% endfor %}
+  {% endif %}
+{% endblock %}

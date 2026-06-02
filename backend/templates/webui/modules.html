@@ -1,0 +1,115 @@
+{% extends "webui/base.html" %}
+{% block title %}Modulos - Pariwana Scheduler{% endblock %}
+{% block content %}
+  <style>
+    .module-toolbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .module-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .module-card {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 12px;
+      background: #fff;
+      min-height: 150px;
+      display: grid;
+      gap: 10px;
+    }
+    .module-card.is-disabled {
+      background: #f9fafb;
+      color: #4b5563;
+    }
+    .module-card-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: flex-start;
+    }
+    .module-key {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 2px;
+    }
+    .module-switch {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      color: var(--ink);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+    .module-state {
+      border-radius: 999px;
+      padding: 4px 8px;
+      font-size: 12px;
+      font-weight: 700;
+      width: fit-content;
+    }
+    .module-state.is-enabled {
+      color: #134e4a;
+      background: #ccfbf1;
+    }
+    .module-state.is-disabled {
+      color: #7f1d1d;
+      background: #fee2e2;
+    }
+    @media (max-width: 980px) {
+      .module-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 640px) {
+      .module-grid { grid-template-columns: 1fr; }
+      .module-toolbar button { width: 100%; }
+    }
+  </style>
+
+  <section class="panel">
+    <form method="post" action="/app/modules/">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="update_modules">
+      <div class="module-toolbar">
+        <div>
+          <h3 style="margin: 0;">Modulos activables</h3>
+          <p class="muted">Tenant: {% if selected_tenant %}{{ selected_tenant.name }}{% else %}-{% endif %}</p>
+        </div>
+        <button class="primary" type="submit">Guardar cambios</button>
+      </div>
+
+      <div class="module-grid">
+        {% for item in rows %}
+          <article class="module-card {% if not item.is_enabled %}is-disabled{% endif %}">
+            <div class="module-card-header">
+              <div>
+                <strong>{{ item.label }}</strong>
+                <div class="module-key">{{ item.module_key }}</div>
+              </div>
+              <label class="module-switch">
+                <input type="checkbox" name="enabled_modules" value="{{ item.module_key }}" {% if item.is_enabled %}checked{% endif %}>
+                Activo
+              </label>
+            </div>
+            <p class="muted" style="margin: 0;">{{ item.description }}</p>
+            <span class="module-state {% if item.is_enabled %}is-enabled{% else %}is-disabled{% endif %}">
+              {% if item.is_enabled %}Habilitado{% else %}Deshabilitado{% endif %}
+            </span>
+            {% if item.updated_at %}
+              <div class="muted">Ultimo cambio: {{ item.updated_at|date:"d-m-Y H:i" }}</div>
+            {% else %}
+              <div class="muted">Sin configuracion guardada.</div>
+            {% endif %}
+          </article>
+        {% empty %}
+          <p class="muted">No hay modulos configurables.</p>
+        {% endfor %}
+      </div>
+    </form>
+  </section>
+{% endblock %}

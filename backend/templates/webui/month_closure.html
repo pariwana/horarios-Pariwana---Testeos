@@ -1,0 +1,89 @@
+{% extends "webui/base.html" %}
+{% block title %}Cierre de mes - Pariwana Scheduler{% endblock %}
+{% block content %}
+  <section class="panel" style="margin-bottom: 12px;">
+    <h3 style="margin-top: 0;">Estado del periodo</h3>
+    <form method="get" action="/app/month-closure/" style="display:flex; gap:8px; align-items:end; flex-wrap:wrap;">
+      <div>
+        <label>Mes</label>
+        <input type="month" name="month" value="{{ month_value }}">
+      </div>
+      <button class="primary" type="submit">Consultar</button>
+    </form>
+    <p style="margin-top: 10px;">
+      Estado actual:
+      <strong>{% if is_closed %}CERRADO{% else %}ABIERTO{% endif %}</strong>
+    </p>
+    <p style="margin-top: 8px;">
+      Reporte BUK del periodo:
+      {% if current_period_export_log %}
+        <strong>GENERADO</strong>
+        <span class="muted">({{ current_period_export_log.file_name }} - {{ current_period_export_log.generated_at|date:"d-m-Y H:i" }})</span>
+      {% else %}
+        <strong>NO GENERADO</strong>
+      {% endif %}
+    </p>
+    {% if is_admin %}
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        {% if is_closed %}
+          <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="reopen">
+            <input type="hidden" name="month" value="{{ month_value }}">
+            <button class="primary" type="submit">Reabrir mes</button>
+          </form>
+        {% else %}
+          <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="close">
+            <input type="hidden" name="month" value="{{ month_value }}">
+            <button class="primary" type="submit">Cerrar mes</button>
+          </form>
+        {% endif %}
+      </div>
+    {% else %}
+      <p class="muted">Solo administradores pueden cerrar o reabrir periodos.</p>
+    {% endif %}
+  </section>
+
+  <section class="panel" style="overflow:auto;">
+    <h3 style="margin-top: 0;">Historial reciente (sede actual)</h3>
+    {% if closures %}
+      <table>
+        <thead>
+          <tr>
+            <th>Periodo</th>
+            <th>Estado</th>
+            <th>Reporte BUK</th>
+            <th>Cerrado por</th>
+            <th>Cerrado en</th>
+            <th>Reabierto por</th>
+            <th>Reabierto en</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for closure in closures %}
+            <tr>
+              <td>{{ closure.month|stringformat:"02d" }}-{{ closure.year }}</td>
+              <td>{{ closure.status }}</td>
+              <td>
+                {% if closure.buk_export_generated %}
+                  SI
+                  <span class="muted">({{ closure.buk_export_log.file_name }})</span>
+                {% else %}
+                  NO
+                {% endif %}
+              </td>
+              <td>{% if closure.closed_by %}{{ closure.closed_by.email }}{% else %}-{% endif %}</td>
+              <td>{% if closure.closed_at %}{{ closure.closed_at|date:"d-m-Y H:i" }}{% else %}-{% endif %}</td>
+              <td>{% if closure.reopened_by %}{{ closure.reopened_by.email }}{% else %}-{% endif %}</td>
+              <td>{% if closure.reopened_at %}{{ closure.reopened_at|date:"d-m-Y H:i" }}{% else %}-{% endif %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">No hay movimientos de cierre/reapertura en esta sede.</p>
+    {% endif %}
+  </section>
+{% endblock %}

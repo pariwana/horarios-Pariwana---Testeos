@@ -1,0 +1,158 @@
+{% extends "webui/base.html" %}
+{% block title %}Soporte - Pariwana Scheduler{% endblock %}
+{% block content %}
+  <style>
+    .support-grid {
+      display: grid;
+      grid-template-columns: minmax(280px, 420px) 1fr;
+      gap: 12px;
+      align-items: start;
+    }
+    .support-card-list {
+      display: grid;
+      gap: 10px;
+    }
+    .support-card {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 12px;
+      background: #fff;
+    }
+    .support-card-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: flex-start;
+      margin-bottom: 8px;
+    }
+    .support-pill {
+      border-radius: 999px;
+      padding: 4px 8px;
+      font-size: 12px;
+      font-weight: 700;
+      background: #ccfbf1;
+      color: #134e4a;
+      white-space: nowrap;
+    }
+    textarea {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px;
+      width: 100%;
+      min-height: 80px;
+      resize: vertical;
+    }
+    @media (max-width: 900px) {
+      .support-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+
+  <div class="support-grid">
+    <section class="panel">
+      <h3 style="margin-top: 0;">Iniciar soporte</h3>
+      <form method="get" action="/app/support/" class="stack" style="margin-bottom: 12px;">
+        <div>
+          <label>Tenant</label>
+          <select name="tenant_id" onchange="this.form.submit()">
+            {% for tenant in tenant_rows %}
+              <option value="{{ tenant.id }}" {% if support_selected_tenant and support_selected_tenant.id == tenant.id %}selected{% endif %}>{{ tenant.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </form>
+
+      <form method="post" action="/app/support/" class="stack">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="start_support">
+        <input type="hidden" name="tenant_id" value="{% if support_selected_tenant %}{{ support_selected_tenant.id }}{% endif %}">
+        <div>
+          <label>Sede</label>
+          <select name="property_id">
+            <option value="">Todo el tenant</option>
+            {% for property in property_rows %}
+              <option value="{{ property.id }}">{{ property.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>Motivo</label>
+          <textarea name="reason" placeholder="Ej. revisar configuracion BUK o apoyar carga de horarios"></textarea>
+        </div>
+        <button class="primary" type="submit">Iniciar y activar soporte</button>
+      </form>
+    </section>
+
+    <section class="panel">
+      <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap;">
+        <div>
+          <h3 style="margin-top: 0;">Sesiones activas</h3>
+          <p class="muted">Solo se listan sesiones iniciadas por tu usuario.</p>
+        </div>
+        {% if support_rows %}
+          <form method="post" action="/app/support/">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="stop_all_support">
+            <input type="hidden" name="reason" value="Cierre masivo desde WebUI">
+            <button type="submit">Cerrar todas</button>
+          </form>
+        {% endif %}
+      </div>
+      <div class="support-card-list">
+        {% for item in support_rows %}
+          <article class="support-card">
+            <div class="support-card-header">
+              <div>
+                <strong>{{ item.tenant.name }}</strong>
+                <div class="muted">{% if item.property %}{{ item.property.name }}{% else %}Todo el tenant{% endif %}</div>
+              </div>
+              <span class="support-pill">Activa #{{ item.id }}</span>
+            </div>
+            <div class="muted">Inicio: {{ item.created_at|date:"d-m-Y H:i" }}</div>
+            <div class="muted">Motivo: {% if item.reason %}{{ item.reason }}{% else %}-{% endif %}</div>
+            <form method="post" action="/app/support/" style="margin-top: 10px; display:flex; gap:8px; flex-wrap:wrap;">
+              {% csrf_token %}
+              <input type="hidden" name="action" value="stop_support">
+              <input type="hidden" name="session_id" value="{{ item.id }}">
+              <input type="text" name="reason" placeholder="Motivo de cierre">
+              <button type="submit">Cerrar</button>
+            </form>
+          </article>
+        {% empty %}
+          <p class="muted">No tienes sesiones activas.</p>
+        {% endfor %}
+      </div>
+    </section>
+  </div>
+
+  <section class="panel" style="margin-top: 12px; overflow:auto;">
+    <h3 style="margin-top: 0;">Historial reciente</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Tenant</th>
+          <th>Sede</th>
+          <th>Inicio</th>
+          <th>Cierre</th>
+          <th>Motivo</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in history_rows %}
+          <tr>
+            <td>#{{ item.id }}</td>
+            <td>{{ item.tenant.name }}</td>
+            <td>{% if item.property %}{{ item.property.name }}{% else %}Todo el tenant{% endif %}</td>
+            <td>{{ item.created_at|date:"d-m-Y H:i" }}</td>
+            <td>{% if item.ended_at %}{{ item.ended_at|date:"d-m-Y H:i" }}{% else %}Activa{% endif %}</td>
+            <td>{% if item.reason %}{{ item.reason }}{% else %}-{% endif %}</td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="6" class="muted">Sin historial de soporte.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endblock %}

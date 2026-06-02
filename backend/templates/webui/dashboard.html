@@ -1,0 +1,145 @@
+{% extends "webui/base.html" %}
+{% block title %}Dashboard - Pariwana Scheduler{% endblock %}
+{% block content %}
+  <style>
+    .dashboard-kpis {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .dashboard-kpi {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+    }
+    .dashboard-section-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 12px;
+    }
+    @media (max-width: 980px) {
+      .dashboard-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .dashboard-section-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 560px) {
+      .dashboard-kpis { grid-template-columns: 1fr; }
+    }
+  </style>
+
+  {% if user.is_super_admin and system_stats %}
+    <section class="panel" style="margin-bottom: 12px;">
+      <h3 style="margin-top: 0;">Estado general del sistema</h3>
+      <div class="dashboard-kpis">
+        <div class="dashboard-kpi">
+          <div class="muted">Tenants activos</div>
+          <div class="kpi">{{ system_stats.active_tenants }}</div>
+          <div class="muted">de {{ system_stats.tenants }} registrados</div>
+        </div>
+        <div class="dashboard-kpi">
+          <div class="muted">Sedes activas</div>
+          <div class="kpi">{{ system_stats.active_properties }}</div>
+          <div class="muted">de {{ system_stats.properties }} registradas</div>
+        </div>
+        <div class="dashboard-kpi">
+          <div class="muted">Trabajadores activos</div>
+          <div class="kpi">{{ system_stats.workers }}</div>
+          <div class="muted">En todos los tenants</div>
+        </div>
+        <div class="dashboard-kpi">
+          <div class="muted">Soporte activo</div>
+          <div class="kpi">{{ system_stats.active_support_sessions }}</div>
+          <div class="muted">Sesiones abiertas</div>
+        </div>
+        <div class="dashboard-kpi">
+          <div class="muted">Modulos deshabilitados</div>
+          <div class="kpi">{{ system_stats.disabled_modules }}</div>
+          <div class="muted">Configuraciones por tenant</div>
+        </div>
+        <div class="dashboard-kpi">
+          <div class="muted">Eventos auditados</div>
+          <div class="kpi">{{ system_stats.recent_audits }}</div>
+          <div class="muted">Total registrado</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="dashboard-section-grid">
+      <section class="panel" style="overflow:auto;">
+        <h3 style="margin-top: 0;">Auditoria reciente</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Tenant</th>
+              <th>Usuario</th>
+              <th>Accion</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in system_recent_audits %}
+              <tr>
+                <td>{{ row.created_at|date:"d-m-Y H:i" }}</td>
+                <td>{% if row.tenant %}{{ row.tenant.name }}{% else %}-{% endif %}</td>
+                <td>{% if row.user %}{{ row.user.email }}{% else %}-{% endif %}</td>
+                <td>{{ row.action }}</td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="4" class="muted">Sin auditoria reciente.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+
+      <section class="panel" style="overflow:auto;">
+        <h3 style="margin-top: 0;">Cierres recientes</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Sede</th>
+              <th>Periodo</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in system_recent_closures %}
+              <tr>
+                <td>{{ row.property.name }}</td>
+                <td>{{ row.month }}/{{ row.year }}</td>
+                <td>{{ row.status }}</td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="3" class="muted">Sin cierres registrados.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+    </div>
+  {% endif %}
+
+  <div class="grid-2">
+    <section class="panel">
+      <div class="muted">Trabajadores</div>
+      <div class="kpi">{{ stats.workers }}</div>
+      <div class="muted">En sede seleccionada</div>
+    </section>
+    <section class="panel">
+      <div class="muted">Areas</div>
+      <div class="kpi">{{ stats.areas }}</div>
+      <div class="muted">En sede seleccionada</div>
+    </section>
+  </div>
+  <section class="panel" style="margin-top: 12px;">
+    <h3 style="margin: 0 0 8px;">Contexto actual</h3>
+    <div class="muted">
+      Tenant: {% if selected_tenant %}{{ selected_tenant.name }}{% else %}-{% endif %}<br>
+      Sede: {% if selected_property %}{{ selected_property.name }}{% else %}-{% endif %}<br>
+      Soporte: {% if support_session %}Activo (#{{ support_session.id }}){% else %}No{% endif %}
+    </div>
+  </section>
+{% endblock %}

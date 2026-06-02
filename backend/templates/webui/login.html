@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ingreso - Pariwana Scheduler</title>
+  <style>
+    body { margin: 0; font-family: Arial, sans-serif; background: #eef2f7; display: grid; place-items: center; min-height: 100vh; }
+    .card { width: min(420px, 94vw); background: #fff; border: 1px solid #d1d5db; border-radius: 8px; padding: 20px; }
+    h1 { margin: 0 0 6px; font-size: 22px; }
+    p { margin: 0 0 16px; color: #6b7280; font-size: 14px; }
+    label { display: block; font-size: 13px; margin-bottom: 6px; color: #4b5563; }
+    input { width: 100%; border: 1px solid #d1d5db; border-radius: 6px; padding: 10px; margin-bottom: 12px; box-sizing: border-box; }
+    button { width: 100%; border: 0; border-radius: 6px; padding: 10px; background: #0f766e; color: #fff; font-size: 14px; cursor: pointer; }
+    .msg { border-radius: 6px; padding: 8px 10px; margin-bottom: 10px; font-size: 13px; background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Pariwana Scheduler</h1>
+    <p>Acceso operativo interno</p>
+    {% if messages %}
+      {% for message in messages %}
+        <div class="msg">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+    <form method="post">
+      {% csrf_token %}
+      <label>Correo</label>
+      <input type="email" name="email" required>
+      <label>Contrasena</label>
+      <input type="password" name="password" required>
+      <button type="submit">Ingresar</button>
+    </form>
+  </div>
+</body>
+</html>

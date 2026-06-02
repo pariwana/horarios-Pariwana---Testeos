@@ -1,26 +1,25 @@
-# Environment
 .env
-.env.*
-!.env.example
-
-# Python / Django
-__pycache__/
-*.py[cod]
-.pytest_cache/
 .venv/
 venv/
-db.sqlite3
-media/
-staticfiles/
+env/
 
-# Node / React
+__pycache__/
+*.py[cod]
+*.pyo
+
+backend/.deps/
+backend/test.sqlite3
+backend/*.log
+backend/runserver*.log
+backend/local_8000*.log
+backend/persistent_8000_attempt.log
+
+*.sqlite3
+*.db
+
 node_modules/
 dist/
-.vite/
+build/
 
-# OS / editors
 .DS_Store
 Thumbs.db
-.idea/
-.vscode/
-

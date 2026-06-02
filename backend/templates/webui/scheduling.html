@@ -1,0 +1,1332 @@
+{% extends "webui/base.html" %}
+{% block title %}Asignacion mensual - Pariwana Scheduler{% endblock %}
+{% block content %}
+  <style>
+    .scheduling-filters-form {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 8px;
+      align-items: end;
+    }
+    .scheduling-filters-actions {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .scheduling-meta {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+    .scheduling-pill {
+      font-size: 12px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid #d1d5db;
+      background: #f9fafb;
+      color: #374151;
+    }
+    .scheduling-toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 8;
+      box-shadow: 0 1px 0 rgba(17, 24, 39, 0.06);
+    }
+    .scheduling-scroll-note {
+      display: none;
+      margin: 8px 0 0;
+      color: #6b7280;
+      font-size: 12px;
+    }
+    .scheduling-table-wrap {
+      overflow: auto;
+      max-height: 72vh;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      background: #ffffff;
+    }
+    .scheduling-table {
+      min-width: max-content;
+      border-collapse: separate;
+      border-spacing: 0;
+    }
+    .scheduling-table td {
+      vertical-align: top;
+      min-width: 116px;
+    }
+    .scheduling-table tbody tr:nth-child(even) td:not(.scheduling-worker-cell) {
+      background: #fcfcfd;
+    }
+    .scheduling-table th {
+      position: sticky;
+      top: 0;
+      z-index: 3;
+      background: #ffffff;
+      white-space: nowrap;
+      text-align: center;
+      min-width: 116px;
+    }
+    .day-header-label {
+      display: grid;
+      gap: 2px;
+      justify-items: center;
+      line-height: 1.1;
+    }
+    .day-header-label strong {
+      font-size: 14px;
+    }
+    .day-header-label span {
+      font-size: 11px;
+      color: #6b7280;
+    }
+    .focus-day-header {
+      background: #dbeafe !important;
+      box-shadow: inset 0 -2px 0 #2563eb;
+    }
+    .focus-day-cell {
+      outline: 2px solid #93c5fd;
+      outline-offset: -2px;
+    }
+    .recent-edit-cell {
+      animation: recentEditFlash 2.2s ease-out 1;
+      background: #fef3c7 !important;
+    }
+    @keyframes recentEditFlash {
+      0% { background: #fde68a; }
+      100% { background: transparent; }
+    }
+    .scheduling-worker-cell {
+      position: sticky;
+      left: 0;
+      z-index: 2;
+      background: #ffffff;
+      min-width: 240px;
+      max-width: 280px;
+      border-right: 1px solid #e5e7eb;
+    }
+    .worker-name {
+      font-weight: 700;
+      line-height: 1.25;
+    }
+    .worker-subtitle {
+      display: block;
+      margin-top: 3px;
+      font-size: 12px;
+      color: #6b7280;
+    }
+    .scheduling-edit-form {
+      display: grid;
+      gap: 4px;
+      min-width: 108px;
+    }
+    .scheduling-edit-form select {
+      min-width: 102px;
+      max-width: 118px;
+      width: 100%;
+    }
+    .assignment-code {
+      display: inline-flex;
+      align-items: center;
+      min-height: 20px;
+      width: fit-content;
+      max-width: 100%;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: #f3f4f6;
+      color: #374151;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .assignment-code.is-empty {
+      color: #9ca3af;
+      font-weight: 400;
+    }
+    .scheduling-mobile-list {
+      display: none;
+    }
+    .worker-card {
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 10px;
+      background: #ffffff;
+    }
+    .worker-card + .worker-card {
+      margin-top: 10px;
+    }
+    .worker-card-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: flex-start;
+      margin-bottom: 8px;
+    }
+    .mobile-day-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .mobile-day-cell {
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 8px;
+      background: #f9fafb;
+      min-width: 0;
+    }
+    .mobile-day-cell.is-weekend {
+      background: #f3f4f6;
+    }
+    .mobile-day-cell.is-night {
+      background: #eef2ff;
+    }
+    .mobile-day-label {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+      font-size: 12px;
+      color: #4b5563;
+      margin-bottom: 6px;
+    }
+    .mobile-day-cell select {
+      width: 100%;
+      min-width: 0;
+      max-width: 100%;
+    }
+    .scheduling-hint {
+      margin: 6px 0 0 0;
+      font-size: 12px;
+      color: #4b5563;
+    }
+    .scheduling-bulk-actions summary {
+      cursor: pointer;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+    @media (max-width: 980px) {
+      .scheduling-table-wrap {
+        max-height: 62vh;
+      }
+      .scheduling-worker-cell {
+        min-width: 180px;
+        max-width: 220px;
+      }
+      .scheduling-edit-form {
+        min-width: 92px;
+      }
+      .scheduling-edit-form select {
+        min-width: 84px;
+        max-width: 94px;
+        font-size: 12px;
+      }
+      .scheduling-filters-form {
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      }
+    }
+    @media (max-width: 720px) {
+      .scheduling-toolbar {
+        position: static;
+      }
+      .scheduling-scroll-note {
+        display: block;
+      }
+      .scheduling-table-wrap {
+        display: none;
+      }
+      .scheduling-mobile-list {
+        display: block;
+      }
+      .scheduling-meta {
+        gap: 6px;
+      }
+      .scheduling-pill {
+        flex: 1 1 46%;
+        border-radius: 6px;
+      }
+    }
+    @media (max-width: 460px) {
+      .mobile-day-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+  <section class="panel scheduling-toolbar" style="margin-bottom: 12px;">
+    <form method="get" action="/app/scheduling/" class="scheduling-filters-form">
+      <div>
+        <label>Mes</label>
+        <input type="month" name="month" value="{{ month_value }}">
+      </div>
+      <div class="scheduling-filters-actions">
+        <a href="/app/scheduling/?month={{ month_prev_value }}{% if selected_area_id %}&area_id={{ selected_area_id }}{% endif %}{% if worker_query %}&worker_q={{ worker_query|urlencode }}{% endif %}{% if focus_date_value %}&focus_date={{ focus_date_value|urlencode }}{% endif %}" style="padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; text-decoration:none; color:#111827;">Mes anterior</a>
+        <a href="/app/scheduling/?month={{ month_next_value }}{% if selected_area_id %}&area_id={{ selected_area_id }}{% endif %}{% if worker_query %}&worker_q={{ worker_query|urlencode }}{% endif %}{% if focus_date_value %}&focus_date={{ focus_date_value|urlencode }}{% endif %}" style="padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; text-decoration:none; color:#111827;">Mes siguiente</a>
+      </div>
+      <div>
+        <label>Area</label>
+        <select name="area_id">
+          <option value="">Todas</option>
+          {% for area in areas %}
+            <option value="{{ area.id }}" {% if selected_area_id == area.id %}selected{% endif %}>{{ area.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label>Trabajador (nombre o DNI)</label>
+        <input type="text" name="worker_q" value="{{ worker_query|default:'' }}" placeholder="Buscar trabajador">
+      </div>
+      {% if focus_date_value %}
+        <input type="hidden" name="focus_date" value="{{ focus_date_value }}">
+      {% endif %}
+      <div class="scheduling-filters-actions">
+        <button class="primary" type="submit">Actualizar</button>
+        {% if worker_query %}
+          <a href="/app/scheduling/?month={{ month_value }}{% if selected_area_id %}&area_id={{ selected_area_id }}{% endif %}" style="font-size:13px;">Limpiar filtro</a>
+        {% endif %}
+      </div>
+    </form>
+    {% if is_month_closed %}
+      <p class="error" style="margin-top: 10px;">Mes cerrado: la grilla se muestra en solo lectura.</p>
+    {% endif %}
+    <p class="scheduling-hint">Tip: usa filtros y desplaza la grilla horizontalmente para editar dias del mes. Selecciona <strong>--</strong> para limpiar una asignacion.</p>
+    <p class="scheduling-scroll-note">En telefono se muestra una vista por trabajador. En desktop se mantiene la grilla mensual.</p>
+  </section>
+
+  {% if pending_previews %}
+    <section class="panel" style="margin-bottom: 12px;">
+      <h3 style="margin-top:0;">Confirmar vista previa</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Operacion</th>
+            <th>Resumen</th>
+            <th>Accion</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for preview in pending_previews %}
+            <tr>
+              <td>{{ preview.label }}</td>
+              <td>{{ preview.summary }}</td>
+              <td>
+                <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                  <form method="post" action="{{ preview.action_url }}" style="display:flex; gap:6px;">
+                    {% csrf_token %}
+                    {% for field in preview.fields %}
+                      {% for value in field.values %}
+                        <input type="hidden" name="{{ field.name }}" value="{{ value }}">
+                      {% endfor %}
+                    {% endfor %}
+                    <button class="primary" type="submit">Confirmar</button>
+                  </form>
+                  <form method="post" action="/app/scheduling/preview-cancel/">
+                    {% csrf_token %}
+                    <input type="hidden" name="month" value="{{ month_value }}">
+                    <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+                    <input type="hidden" name="preview_id" value="{{ preview.id }}">
+                    <button type="submit">Cancelar</button>
+                  </form>
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  {% endif %}
+
+  {% if can_schedule and not is_month_closed %}
+    <details class="panel scheduling-bulk-actions" style="margin-bottom: 12px;">
+      <summary>Acciones masivas y plantillas</summary>
+      {% if templates_load_error %}
+        <p class="error" style="margin-top:0;">{{ templates_load_error }}</p>
+      {% endif %}
+      <h3 style="margin-top: 0;">Asignacion masiva por turno</h3>
+      <form method="post" action="/app/scheduling/bulk-shift/" style="display:flex; gap:8px; align-items:end; flex-wrap:wrap;">
+        {% csrf_token %}
+        <input type="hidden" name="month" value="{{ month_value }}">
+        <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+        <div>
+          <label>Fecha</label>
+          <input type="date" name="work_date" value="{% if days %}{{ days.0.date|date:'Y-m-d' }}{% endif %}" required>
+        </div>
+        <div>
+          <label>Turno</label>
+          <select name="shift_id" required>
+            <option value="">Seleccionar</option>
+            {% for shift in bulk_shift_options %}
+              <option value="{{ shift.id }}">
+                {{ shift.start_time|time:"H:i" }}-{{ shift.end_time|time:"H:i" }} ({{ shift.name }}){% if not selected_area_id %} - {{ shift.area.name }}{% endif %}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+        <button class="primary" type="submit">Aplicar a trabajadores visibles</button>
+        <button type="submit" name="dry_run" value="1">Vista previa</button>
+      </form>
+
+      <hr style="margin:12px 0; border:none; border-top:1px solid #e5e7eb;">
+
+      <h3 style="margin-top: 0;">Asignacion masiva por estado especial</h3>
+      <form method="post" action="/app/scheduling/bulk-state/" style="display:flex; gap:8px; align-items:end; flex-wrap:wrap;">
+        {% csrf_token %}
+        <input type="hidden" name="month" value="{{ month_value }}">
+        <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+        <div>
+          <label>Fecha</label>
+          <input type="date" name="work_date" value="{% if days %}{{ days.0.date|date:'Y-m-d' }}{% endif %}" required>
+        </div>
+        <div>
+          <label>Estado especial</label>
+          <select name="special_state_id" required>
+            <option value="">Seleccionar</option>
+            {% for state in bulk_state_options %}
+              <option value="{{ state.id }}">{{ state.name }} ({{ state.buk_code|default:state.name }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <button class="primary" type="submit">Aplicar a trabajadores visibles</button>
+        <button type="submit" name="dry_run" value="1">Vista previa</button>
+      </form>
+
+      <hr style="margin:12px 0; border:none; border-top:1px solid #e5e7eb;">
+
+      <h4 style="margin:0 0 8px 0;">Vacaciones por rango</h4>
+      <form method="post" action="/app/scheduling/bulk-range-state/" style="display:flex; gap:8px; align-items:end; flex-wrap:wrap;">
+        {% csrf_token %}
+        <input type="hidden" name="month" value="{{ month_value }}">
+        <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+        <div>
+          <label>Desde</label>
+          <input type="date" name="date_from" value="{% if days %}{{ days.0.date|date:'Y-m-d' }}{% endif %}" required>
+        </div>
+        <div>
+          <label>Hasta</label>
+          <input type="date" name="date_to" value="{% if days %}{{ days.0.date|date:'Y-m-d' }}{% endif %}" required>
+        </div>
+        <div>
+          <label>Estado especial</label>
+          <select name="special_state_id" required>
+            <option value="">Seleccionar</option>
+            {% for state in bulk_state_options %}
+              <option value="{{ state.id }}">{{ state.name }} ({{ state.buk_code|default:state.name }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>Trabajadores (opcional, multiselección)</label>
+          <select name="worker_ids" multiple size="5">
+            {% for worker in bulk_worker_options %}
+              <option value="{{ worker.id }}">{{ worker.last_name }}, {{ worker.first_name }} - {{ worker.document_number }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <button class="primary" type="submit">Aplicar rango visible</button>
+        <button type="submit" name="dry_run" value="1">Vista previa</button>
+      </form>
+
+      <hr style="margin:12px 0; border:none; border-top:1px solid #e5e7eb;">
+
+      <h4 style="margin:0 0 8px 0;">Subrangos multiples por estado</h4>
+      <form id="multi-range-form" method="post" action="/app/scheduling/bulk-multi-range-state/" style="display:flex; gap:8px; align-items:end; flex-wrap:wrap;">
+        {% csrf_token %}
+        <input type="hidden" name="month" value="{{ month_value }}">
+        <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+        <table style="width:100%; max-width:980px;">
+          <thead>
+            <tr>
+              <th>Desde</th>
+              <th>Hasta</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody id="multi-range-rows">
+            {% if range_editor_rows %}
+              {% for row in range_editor_rows %}
+                <tr>
+                  <td><input type="date" name="range_date_from" value="{{ row.date_from }}"></td>
+                  <td><input type="date" name="range_date_to" value="{{ row.date_to }}"></td>
+                  <td>
+                    <select name="range_state_id">
+                      <option value="">Seleccionar</option>
+                      {% for state in bulk_state_options %}
+                        <option value="{{ state.id }}" {% if row.state_id == state.id %}selected{% endif %}>{{ state.name }} ({{ state.buk_code|default:state.name }})</option>
+                      {% endfor %}
+                    </select>
+                  </td>
+                </tr>
+              {% endfor %}
+            {% else %}
+              {% for _ in "12" %}
+                <tr>
+                  <td><input type="date" name="range_date_from"></td>
+                  <td><input type="date" name="range_date_to"></td>
+                  <td>
+                    <select name="range_state_id">
+                      <option value="">Seleccionar</option>
+                      {% for state in bulk_state_options %}
+                        <option value="{{ state.id }}">{{ state.name }} ({{ state.buk_code|default:state.name }})</option>
+                      {% endfor %}
+                    </select>
+                  </td>
+                </tr>
+              {% endfor %}
+            {% endif %}
+          </tbody>
+        </table>
+        <div style="display:flex; gap:6px;">
+          <button type="button" id="add-range-row">Agregar subrango</button>
+          <button type="button" id="remove-range-row">Quitar ultimo</button>
+        </div>
+        <div>
+          <label>Trabajadores (opcional)</label>
+          <select name="worker_ids" multiple size="5">
+            {% for worker in bulk_worker_options %}
+              <option value="{{ worker.id }}">{{ worker.last_name }}, {{ worker.first_name }} - {{ worker.document_number }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <button class="primary" type="submit">Aplicar subrangos</button>
+        <button type="submit" name="dry_run" value="1">Vista previa</button>
+      </form>
+      <form id="save-range-template-form" method="post" action="/app/scheduling/save-range-template/" style="display:flex; gap:8px; align-items:end; flex-wrap:wrap; margin-top:8px;">
+        {% csrf_token %}
+        <input type="hidden" name="month" value="{{ month_value }}">
+        <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+        <div>
+          <label>Nombre plantilla subrangos</label>
+          <input type="text" name="template_name" placeholder="Ej: Vacaciones + descanso" required>
+        </div>
+        <div id="save-range-template-hidden-fields"></div>
+        <button class="primary" type="button" id="save-range-template-button">Guardar plantilla de subrangos</button>
+      </form>
+      <form id="update-range-template-ranges-form" method="post" action="/app/scheduling/update-range-template-ranges/" style="display:flex; gap:8px; align-items:end; flex-wrap:wrap; margin-top:8px;">
+        {% csrf_token %}
+        <input type="hidden" name="month" value="{{ month_value }}">
+        <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+        <div>
+          <label>Actualizar contenido de plantilla</label>
+          <select name="template_id" required>
+            <option value="">Seleccionar</option>
+            {% for item in range_templates_admin %}
+              <option value="{{ item.id }}" {% if range_editor_template_id == item.id %}selected{% endif %}>{{ item.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div id="update-range-template-hidden-fields"></div>
+        <button class="primary" type="button" id="update-range-template-ranges-button">Reemplazar contenido con subrangos actuales</button>
+      </form>
+      <form id="create-range-template-version-form" method="post" action="/app/scheduling/create-range-template-version/" style="display:flex; gap:8px; align-items:end; flex-wrap:wrap; margin-top:8px;">
+        {% csrf_token %}
+        <input type="hidden" name="month" value="{{ month_value }}">
+        <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+        <div>
+          <label>Guardar como nueva version de</label>
+          <select name="template_id" required>
+            <option value="">Seleccionar</option>
+            {% for item in range_templates_admin %}
+              <option value="{{ item.id }}" {% if range_editor_template_id == item.id %}selected{% endif %}>{{ item.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div id="create-range-template-version-hidden-fields"></div>
+        <button class="primary" type="button" id="create-range-template-version-button">Guardar como nueva version</button>
+      </form>
+      <form method="post" action="/app/scheduling/apply-range-template/" style="display:flex; gap:8px; align-items:end; flex-wrap:wrap; margin-top:8px;">
+        {% csrf_token %}
+        <input type="hidden" name="month" value="{{ month_value }}">
+        <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+        <div>
+          <label>Plantilla subrangos</label>
+          <select name="template_id" required>
+            <option value="">Seleccionar</option>
+            {% for item in range_templates %}
+              <option value="{{ item.id }}">{{ item.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>Trabajadores (opcional)</label>
+          <select name="worker_ids" multiple size="5">
+            {% for worker in bulk_worker_options %}
+              <option value="{{ worker.id }}">{{ worker.last_name }}, {{ worker.first_name }} - {{ worker.document_number }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% if is_tenant_admin %}
+          <label style="display:flex; gap:6px; align-items:center; margin:0;">
+            <input type="checkbox" name="allow_risky_template" value="1">
+            Aplicar con observaciones (solo administrador)
+          </label>
+        {% endif %}
+        <button class="primary" type="submit">Aplicar plantilla subrangos</button>
+        <button type="submit" name="dry_run" value="1">Vista previa</button>
+      </form>
+      <form method="post" action="/app/scheduling/range-template-preview/" style="display:flex; gap:8px; align-items:end; flex-wrap:wrap; margin-top:8px;">
+        {% csrf_token %}
+        <input type="hidden" name="month" value="{{ month_value }}">
+        <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+        <div>
+          <label>Ver detalle plantilla</label>
+          <select name="template_id" required>
+            <option value="">Seleccionar</option>
+            {% for item in range_templates_admin %}
+              <option value="{{ item.id }}">{{ item.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <button type="submit">Ver detalle</button>
+      </form>
+      {% if range_template_preview %}
+        <div style="margin-top:8px; border:1px solid #e5e7eb; border-radius:6px; padding:8px;">
+          <h4 style="margin:0 0 8px 0;">Detalle plantilla: {{ range_template_preview.template.name }}</h4>
+          <p class="muted" style="margin:0 0 8px 0;">
+            Cobertura: {{ range_template_preview.covered_days }}/{{ range_template_preview.month_days_total }} dias. Solapes: {{ range_template_preview.overlap_days }} dias.
+          </p>
+          <p class="muted" style="margin:0 0 8px 0;">
+            Impacto estimado ({{ range_template_preview.impact_workers }} trabajadores): Total {{ range_template_preview.impact.total }},
+            Crear {{ range_template_preview.impact.to_create }}, Actualizar {{ range_template_preview.impact.to_update }},
+            Sin cambios {{ range_template_preview.impact.unchanged }}.
+          </p>
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Desde</th>
+                <th>Hasta</th>
+                <th>Estado</th>
+                <th>Codigo</th>
+                <th>Estado fila</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for item in range_template_preview.rows %}
+                <tr>
+                  <td>{{ item.index }}</td>
+                  <td>{% if item.date_from != "-" %}{{ item.date_from|date:"Y-m-d" }}{% else %}-{% endif %}</td>
+                  <td>{% if item.date_to != "-" %}{{ item.date_to|date:"Y-m-d" }}{% else %}-{% endif %}</td>
+                  <td>{{ item.state_name }}</td>
+                  <td>{{ item.state_code|default:"" }}</td>
+                  <td>{{ item.status }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% endif %}
+      <div style="margin-top:8px;">
+        <h4 style="margin:0 0 8px 0;">Gestion plantillas de subrangos (area actual)</h4>
+        <form method="get" action="/app/scheduling/" style="display:flex; gap:8px; align-items:end; flex-wrap:wrap; margin-bottom:8px;">
+          <input type="hidden" name="month" value="{{ month_value }}">
+          <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+          <div>
+            <label>Filtro semaforo</label>
+            <select name="range_template_risk">
+              <option value="all" {% if range_template_risk_filter == "all" %}selected{% endif %}>Todos</option>
+              <option value="error" {% if range_template_risk_filter == "error" %}selected{% endif %}>Rojo</option>
+              <option value="warning" {% if range_template_risk_filter == "warning" %}selected{% endif %}>Amarillo</option>
+              <option value="ok" {% if range_template_risk_filter == "ok" %}selected{% endif %}>Verde</option>
+            </select>
+          </div>
+          <button type="submit">Filtrar</button>
+        </form>
+        <table>
+          <thead>
+            <tr>
+              <th>Nombre</th>
+              <th>Estado</th>
+              <th>Subrangos</th>
+              <th>Semaforo</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in range_templates_admin_rows %}
+              <tr>
+                <td>{{ row.template.name }}</td>
+                <td>{% if row.template.active %}Activa{% else %}Inactiva{% endif %}</td>
+                <td>{{ row.template.ranges|length }}</td>
+                <td>
+                  {% if row.health %}
+                    <span
+                      style="
+                        display:inline-block;
+                        border-radius:12px;
+                        padding:2px 8px;
+                        font-size:12px;
+                        font-weight:700;
+                        {% if row.health.level == 'ok' %}
+                          background:#dcfce7; color:#166534;
+                        {% elif row.health.level == 'warning' %}
+                          background:#fef3c7; color:#92400e;
+                        {% else %}
+                          background:#fee2e2; color:#991b1b;
+                        {% endif %}
+                      "
+                    >
+                      {{ row.health.label }}
+                    </span><br>
+                    <span class="muted">
+                      Cobertura {{ row.health.covered_days }}/{{ row.health.month_days_total }},
+                      Solapes {{ row.health.overlap_days }},
+                      Invalidos {{ row.health.invalid_ranges }}
+                    </span>
+                  {% else %}
+                    <span class="muted">-</span>
+                  {% endif %}
+                </td>
+                <td>
+                  <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                    {% if row.health and row.health.level != "ok" %}
+                      <form method="post" action="/app/scheduling/clone-range-template/">
+                        {% csrf_token %}
+                        <input type="hidden" name="month" value="{{ month_value }}">
+                        <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+                        <input type="hidden" name="template_id" value="{{ row.template.id }}">
+                        <button type="submit">Corregir plantilla</button>
+                      </form>
+                    {% endif %}
+                    <form method="post" action="/app/scheduling/update-range-template/" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                      {% csrf_token %}
+                      <input type="hidden" name="month" value="{{ month_value }}">
+                      <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+                      <input type="hidden" name="template_id" value="{{ row.template.id }}">
+                      <input type="text" name="template_name" value="{{ row.template.name }}" required>
+                      <label style="display:flex; gap:4px; align-items:center; margin:0;">
+                        <input type="checkbox" name="active" {% if row.template.active %}checked{% endif %}>
+                        Activa
+                      </label>
+                      <button type="submit">Guardar</button>
+                    </form>
+                    <form method="post" action="/app/scheduling/delete-range-template/" onsubmit="return confirm('Eliminar plantilla de subrangos?');">
+                      {% csrf_token %}
+                      <input type="hidden" name="month" value="{{ month_value }}">
+                      <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+                      <input type="hidden" name="template_id" value="{{ row.template.id }}">
+                      <button type="submit">Eliminar</button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="5" class="muted">No hay plantillas de subrangos para el area actual.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <template id="multi-range-row-template">
+        <tr>
+          <td><input type="date" name="range_date_from"></td>
+          <td><input type="date" name="range_date_to"></td>
+          <td>
+            <select name="range_state_id">
+              <option value="">Seleccionar</option>
+              {% for state in bulk_state_options %}
+                <option value="{{ state.id }}">{{ state.name }} ({{ state.buk_code|default:state.name }})</option>
+              {% endfor %}
+            </select>
+          </td>
+        </tr>
+      </template>
+
+      <hr style="margin:12px 0; border:none; border-top:1px solid #e5e7eb;">
+
+      <h4 style="margin:0 0 8px 0;">Patron semanal por rango</h4>
+      <form method="post" action="/app/scheduling/bulk-week-pattern/" style="display:flex; gap:8px; align-items:end; flex-wrap:wrap;">
+        {% csrf_token %}
+        <input type="hidden" name="month" value="{{ month_value }}">
+        <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+        <div>
+          <label>Desde</label>
+          <input type="date" name="date_from" value="{% if days %}{{ days.0.date|date:'Y-m-d' }}{% endif %}" required>
+        </div>
+        <div>
+          <label>Hasta</label>
+          <input type="date" name="date_to" value="{% if days %}{{ days.0.date|date:'Y-m-d' }}{% endif %}" required>
+        </div>
+        <div>
+          <label>Trabajadores (opcional, multiselección)</label>
+          <select name="worker_ids" multiple size="5">
+            {% for worker in bulk_worker_options %}
+              <option value="{{ worker.id }}">{{ worker.last_name }}, {{ worker.first_name }} - {{ worker.document_number }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div style="display:grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap:8px;">
+          <div>
+            <label>Lunes</label>
+            <select name="monday_value">
+              <option value="">--</option>
+              {% for shift in bulk_shift_options %}
+                <option value="shift:{{ shift.id }}">{{ shift.start_time|time:"H:i" }}-{{ shift.end_time|time:"H:i" }} ({{ shift.name }})</option>
+              {% endfor %}
+              {% for state in bulk_state_options %}
+                <option value="state:{{ state.id }}">{{ state.buk_code|default:state.name }} ({{ state.name }})</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label>Martes</label>
+            <select name="tuesday_value">
+              <option value="">--</option>
+              {% for shift in bulk_shift_options %}
+                <option value="shift:{{ shift.id }}">{{ shift.start_time|time:"H:i" }}-{{ shift.end_time|time:"H:i" }} ({{ shift.name }})</option>
+              {% endfor %}
+              {% for state in bulk_state_options %}
+                <option value="state:{{ state.id }}">{{ state.buk_code|default:state.name }} ({{ state.name }})</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label>Miercoles</label>
+            <select name="wednesday_value">
+              <option value="">--</option>
+              {% for shift in bulk_shift_options %}
+                <option value="shift:{{ shift.id }}">{{ shift.start_time|time:"H:i" }}-{{ shift.end_time|time:"H:i" }} ({{ shift.name }})</option>
+              {% endfor %}
+              {% for state in bulk_state_options %}
+                <option value="state:{{ state.id }}">{{ state.buk_code|default:state.name }} ({{ state.name }})</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label>Jueves</label>
+            <select name="thursday_value">
+              <option value="">--</option>
+              {% for shift in bulk_shift_options %}
+                <option value="shift:{{ shift.id }}">{{ shift.start_time|time:"H:i" }}-{{ shift.end_time|time:"H:i" }} ({{ shift.name }})</option>
+              {% endfor %}
+              {% for state in bulk_state_options %}
+                <option value="state:{{ state.id }}">{{ state.buk_code|default:state.name }} ({{ state.name }})</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label>Viernes</label>
+            <select name="friday_value">
+              <option value="">--</option>
+              {% for shift in bulk_shift_options %}
+                <option value="shift:{{ shift.id }}">{{ shift.start_time|time:"H:i" }}-{{ shift.end_time|time:"H:i" }} ({{ shift.name }})</option>
+              {% endfor %}
+              {% for state in bulk_state_options %}
+                <option value="state:{{ state.id }}">{{ state.buk_code|default:state.name }} ({{ state.name }})</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label>Sabado</label>
+            <select name="saturday_value">
+              <option value="">--</option>
+              {% for shift in bulk_shift_options %}
+                <option value="shift:{{ shift.id }}">{{ shift.start_time|time:"H:i" }}-{{ shift.end_time|time:"H:i" }} ({{ shift.name }})</option>
+              {% endfor %}
+              {% for state in bulk_state_options %}
+                <option value="state:{{ state.id }}">{{ state.buk_code|default:state.name }} ({{ state.name }})</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label>Domingo</label>
+            <select name="sunday_value">
+              <option value="">--</option>
+              {% for shift in bulk_shift_options %}
+                <option value="shift:{{ shift.id }}">{{ shift.start_time|time:"H:i" }}-{{ shift.end_time|time:"H:i" }} ({{ shift.name }})</option>
+              {% endfor %}
+              {% for state in bulk_state_options %}
+                <option value="state:{{ state.id }}">{{ state.buk_code|default:state.name }} ({{ state.name }})</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <button class="primary" type="submit">Aplicar patron</button>
+        <button type="submit" name="dry_run" value="1">Vista previa</button>
+      </form>
+
+      <div style="display:flex; gap:12px; flex-wrap:wrap; margin-top:10px;">
+        <form method="post" action="/app/scheduling/save-week-pattern-template/" style="display:flex; gap:8px; align-items:end; flex-wrap:wrap;">
+          {% csrf_token %}
+          <input type="hidden" name="month" value="{{ month_value }}">
+          <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+          <div>
+            <label>Nombre plantilla</label>
+            <input type="text" name="template_name" placeholder="Ej: OFF domingos + turno manana" required>
+          </div>
+          <input type="hidden" name="monday_value" value="">
+          <input type="hidden" name="tuesday_value" value="">
+          <input type="hidden" name="wednesday_value" value="">
+          <input type="hidden" name="thursday_value" value="">
+          <input type="hidden" name="friday_value" value="">
+          <input type="hidden" name="saturday_value" value="">
+          <input type="hidden" name="sunday_value" value="">
+          <button class="primary" type="button" onclick="
+            var source=this.closest('section').querySelector('form[action=\'/app/scheduling/bulk-week-pattern/\']');
+            var target=this.form;
+            ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'].forEach(function(day){
+              target.querySelector('[name='+day+'_value]').value = source.querySelector('[name='+day+'_value]').value;
+            });
+            target.submit();
+          ">Guardar plantilla del patron</button>
+        </form>
+
+        <form method="post" action="/app/scheduling/apply-week-pattern-template/" style="display:flex; gap:8px; align-items:end; flex-wrap:wrap;">
+          {% csrf_token %}
+          <input type="hidden" name="month" value="{{ month_value }}">
+          <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+          <div>
+            <label>Plantilla guardada</label>
+            <select name="template_id" required>
+              <option value="">Seleccionar</option>
+              {% for item in week_pattern_templates %}
+                <option value="{{ item.id }}">{{ item.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div>
+            <label>Desde</label>
+            <input type="date" name="date_from" value="{% if days %}{{ days.0.date|date:'Y-m-d' }}{% endif %}" required>
+          </div>
+          <div>
+            <label>Hasta</label>
+            <input type="date" name="date_to" value="{% if days %}{{ days.0.date|date:'Y-m-d' }}{% endif %}" required>
+          </div>
+          <div>
+            <label>Trabajadores (opcional)</label>
+            <select name="worker_ids" multiple size="5">
+              {% for worker in bulk_worker_options %}
+                <option value="{{ worker.id }}">{{ worker.last_name }}, {{ worker.first_name }} - {{ worker.document_number }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <button class="primary" type="submit">Aplicar plantilla</button>
+          <button type="submit" name="dry_run" value="1">Vista previa</button>
+        </form>
+      </div>
+
+      <div style="margin-top:10px;">
+        <h4 style="margin:0 0 8px 0;">Gestion de plantillas (area actual)</h4>
+        <table>
+          <thead>
+            <tr>
+              <th>Nombre</th>
+              <th>Estado</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for item in week_pattern_templates_admin %}
+              <tr>
+                <td>{{ item.name }}</td>
+                <td>{% if item.active %}Activa{% else %}Inactiva{% endif %}</td>
+                <td>
+                  <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                    <form method="post" action="/app/scheduling/update-week-pattern-template/" style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                      {% csrf_token %}
+                      <input type="hidden" name="month" value="{{ month_value }}">
+                      <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+                      <input type="hidden" name="template_id" value="{{ item.id }}">
+                      <input type="text" name="template_name" value="{{ item.name }}" required>
+                      <label style="display:flex; gap:4px; align-items:center; margin:0;">
+                        <input type="checkbox" name="active" {% if item.active %}checked{% endif %}>
+                        Activa
+                      </label>
+                      <button type="submit">Guardar</button>
+                    </form>
+                    <form method="post" action="/app/scheduling/delete-week-pattern-template/" onsubmit="return confirm('Eliminar plantilla?');">
+                      {% csrf_token %}
+                      <input type="hidden" name="month" value="{{ month_value }}">
+                      <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+                      <input type="hidden" name="template_id" value="{{ item.id }}">
+                      <button type="submit">Eliminar</button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="3" class="muted">No hay plantillas para el area actual.</td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <hr style="margin:12px 0; border:none; border-top:1px solid #e5e7eb;">
+
+      <h4 style="margin:0 0 8px 0;">OFF todos los domingos del mes</h4>
+      <form method="post" action="/app/scheduling/bulk-sundays-state/" style="display:flex; gap:8px; align-items:end; flex-wrap:wrap;">
+        {% csrf_token %}
+        <input type="hidden" name="month" value="{{ month_value }}">
+        <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+        <div>
+          <label>Estado especial</label>
+          <select name="special_state_id" required>
+            <option value="">Seleccionar</option>
+            {% for state in bulk_state_options %}
+              <option value="{{ state.id }}">{{ state.name }} ({{ state.buk_code|default:state.name }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <button class="primary" type="submit">Aplicar domingos visibles</button>
+        <button type="submit" name="dry_run" value="1">Vista previa</button>
+      </form>
+
+      <hr style="margin:12px 0; border:none; border-top:1px solid #e5e7eb;">
+
+      <h4 style="margin:0 0 8px 0;">Regla operativa (Lun-Sab + Domingo)</h4>
+      <form method="post" action="/app/scheduling/operational-rule/" style="display:flex; gap:8px; align-items:end; flex-wrap:wrap;">
+        {% csrf_token %}
+        <input type="hidden" name="month" value="{{ month_value }}">
+        <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+        <div>
+          <label>Desde</label>
+          <input type="date" name="date_from" value="{% if days %}{{ days.0.date|date:'Y-m-d' }}{% endif %}" required>
+        </div>
+        <div>
+          <label>Hasta</label>
+          <input type="date" name="date_to" value="{% if days %}{{ days.0.date|date:'Y-m-d' }}{% endif %}" required>
+        </div>
+        <div>
+          <label>Lunes-Sabado</label>
+          <select name="weekday_value" required>
+            <option value="">Seleccionar</option>
+            {% for shift in bulk_shift_options %}
+              <option value="shift:{{ shift.id }}">{{ shift.start_time|time:"H:i" }}-{{ shift.end_time|time:"H:i" }} ({{ shift.name }})</option>
+            {% endfor %}
+            {% for state in bulk_state_options %}
+              <option value="state:{{ state.id }}">{{ state.buk_code|default:state.name }} ({{ state.name }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>Domingo</label>
+          <select name="sunday_state_id" required>
+            <option value="">Seleccionar</option>
+            {% for state in bulk_state_options %}
+              <option value="{{ state.id }}">{{ state.name }} ({{ state.buk_code|default:state.name }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>Trabajadores (opcional)</label>
+          <select name="worker_ids" multiple size="5">
+            {% for worker in bulk_worker_options %}
+              <option value="{{ worker.id }}">{{ worker.last_name }}, {{ worker.first_name }} - {{ worker.document_number }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <button class="primary" type="submit">Aplicar regla operativa</button>
+        <button type="submit" name="dry_run" value="1">Vista previa</button>
+      </form>
+
+      <hr style="margin:12px 0; border:none; border-top:1px solid #e5e7eb;">
+
+      <h4 style="margin:0 0 8px 0;">Copiar semana</h4>
+      <form method="post" action="/app/scheduling/copy-week/" style="display:flex; gap:8px; align-items:end; flex-wrap:wrap;">
+        {% csrf_token %}
+        <input type="hidden" name="month" value="{{ month_value }}">
+        <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+        <div>
+          <label>Semana origen (inicio)</label>
+          <input type="date" name="source_week_start" value="{% if days %}{{ days.0.date|date:'Y-m-d' }}{% endif %}" required>
+        </div>
+        <div>
+          <label>Semana destino (inicio)</label>
+          <input type="date" name="target_week_start" value="{% if days %}{{ days.0.date|date:'Y-m-d' }}{% endif %}" required>
+        </div>
+        <div>
+          <label>Copiar</label>
+          <select name="copy_kind">
+            <option value="all">Todo</option>
+            <option value="shift">Solo turnos</option>
+            <option value="state">Solo estados</option>
+          </select>
+        </div>
+        <button class="primary" type="submit">Copiar semana visible</button>
+        <button type="submit" name="dry_run" value="1">Vista previa</button>
+      </form>
+
+      <hr style="margin:12px 0; border:none; border-top:1px solid #e5e7eb;">
+
+      <h4 style="margin:0 0 8px 0;">Copiar mes anterior</h4>
+      <form method="post" action="/app/scheduling/copy-previous-month/" style="display:flex; gap:8px; align-items:end; flex-wrap:wrap;">
+        {% csrf_token %}
+        <input type="hidden" name="month" value="{{ month_value }}">
+        <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+        <div>
+          <label>Copiar</label>
+          <select name="copy_kind">
+            <option value="all">Todo</option>
+            <option value="shift">Solo turnos</option>
+            <option value="state">Solo estados</option>
+          </select>
+        </div>
+        <button class="primary" type="submit">Copiar mes anterior en vista actual</button>
+        <button type="submit" name="dry_run" value="1">Vista previa</button>
+      </form>
+
+      <hr style="margin:12px 0; border:none; border-top:1px solid #e5e7eb;">
+
+      <h4 style="margin:0 0 8px 0;">Copiar desde mes origen</h4>
+      <form method="post" action="/app/scheduling/copy-month/" style="display:flex; gap:8px; align-items:end; flex-wrap:wrap;">
+        {% csrf_token %}
+        <input type="hidden" name="month" value="{{ month_value }}">
+        <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+        <div>
+          <label>Mes origen</label>
+          <input type="month" name="source_month" required>
+        </div>
+        <div>
+          <label>Copiar</label>
+          <select name="copy_kind">
+            <option value="all">Todo</option>
+            <option value="shift">Solo turnos</option>
+            <option value="state">Solo estados</option>
+          </select>
+        </div>
+        <button class="primary" type="submit">Copiar mes origen en vista actual</button>
+        <button type="submit" name="dry_run" value="1">Vista previa</button>
+      </form>
+    </details>
+  {% endif %}
+
+  <div class="scheduling-meta">
+    <span class="scheduling-pill">Trabajadores visibles: {{ rows|length }}</span>
+    <span class="scheduling-pill">Dias del mes: {{ days|length }}</span>
+    <span class="scheduling-pill">Mes: {{ month_value }}</span>
+    <span class="scheduling-pill">Programadas: {{ scheduled_cells_count }}</span>
+    <span class="scheduling-pill">Pendientes: {{ missing_cells_count }}</span>
+    <span class="scheduling-pill">Nocturnas: {{ night_cells_count }}</span>
+  </div>
+
+  <section class="panel">
+    <div class="scheduling-table-wrap" id="scheduling-table-wrap">
+    <table class="scheduling-table">
+      <thead>
+        <tr>
+          <th class="scheduling-worker-cell" style="z-index:4;">Trabajador</th>
+          {% for day in days %}
+            <th data-day-date="{{ day.date|date:'Y-m-d' }}" class="{% if day.is_focus %}focus-day-header{% endif %}" {% if day.is_weekend and not day.is_focus %}style="background:#f3f4f6;"{% endif %}>
+              <span class="day-header-label">
+                <strong>{{ day.day }}</strong>
+                <span>{{ day.weekday_label }}</span>
+              </span>
+            </th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          <tr>
+            <td class="scheduling-worker-cell">
+              <span class="worker-name">{{ row.worker.last_name }}, {{ row.worker.first_name }}</span>
+              <span class="worker-subtitle">{{ row.worker.document_number }} - {{ row.worker.area.name }}</span>
+            </td>
+            {% for cell in row.cells %}
+              <td data-day-date="{{ cell.date|date:'Y-m-d' }}" class="{% if cell.is_focus %}focus-day-cell{% endif %} {% if cell.is_recent_edit %}recent-edit-cell{% endif %}" {% if cell.is_night %}style="background:#eef2ff;"{% endif %}>
+                {% if cell.editable %}
+                  <form method="post" action="/app/scheduling/assign/" class="scheduling-edit-form">
+                    {% csrf_token %}
+                    <input type="hidden" name="month" value="{{ month_value }}">
+                    <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+                    <input type="hidden" name="worker_q" value="{{ worker_query|default:'' }}">
+                    <input type="hidden" name="focus_date" value="{{ focus_date_value|default:'' }}">
+                    <input type="hidden" name="worker_id" value="{{ row.worker.id }}">
+                    <input type="hidden" name="work_date" value="{{ cell.date|date:'Y-m-d' }}">
+                    <select name="assignment_value" onchange="this.form.submit()">
+                      <option value="">--</option>
+                      {% for shift in cell.shift_options %}
+                        <option value="shift:{{ shift.id }}" {% if cell.selected_shift_id == shift.id %}selected{% endif %}>
+                          {{ shift.start_time|time:"H:i" }}-{{ shift.end_time|time:"H:i" }} ({{ shift.name }})
+                        </option>
+                      {% endfor %}
+                      {% for state in cell.state_options %}
+                        <option value="state:{{ state.id }}" {% if cell.selected_state_id == state.id %}selected{% endif %}>
+                          {{ state.buk_code|default:state.name }} ({{ state.name }})
+                        </option>
+                      {% endfor %}
+                    </select>
+                    <span class="assignment-code {% if not cell.display_code %}is-empty{% endif %}">{{ cell.display_code|default:'-' }}</span>
+                  </form>
+                {% else %}
+                  <span class="assignment-code {% if not cell.display_code %}is-empty{% endif %}">{{ cell.display_code|default:'-' }}</span>
+                {% endif %}
+              </td>
+            {% endfor %}
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="100" class="muted">No hay trabajadores activos para este filtro.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+
+    <div class="scheduling-mobile-list" aria-label="Vista movil de asignacion">
+      {% for row in rows %}
+        <article class="worker-card">
+          <div class="worker-card-header">
+            <div>
+              <div class="worker-name">{{ row.worker.last_name }}, {{ row.worker.first_name }}</div>
+              <span class="worker-subtitle">{{ row.worker.document_number }} - {{ row.worker.area.name }}</span>
+            </div>
+            {% if not row.area_allowed %}
+              <span class="scheduling-pill">Solo lectura</span>
+            {% endif %}
+          </div>
+          <div class="mobile-day-grid">
+            {% for cell in row.cells %}
+              <div class="mobile-day-cell {% if cell.is_weekend %}is-weekend{% endif %} {% if cell.is_night %}is-night{% endif %} {% if cell.is_focus %}focus-day-cell{% endif %} {% if cell.is_recent_edit %}recent-edit-cell{% endif %}">
+                <div class="mobile-day-label">
+                  <strong>{{ cell.day }} {{ cell.weekday_label }}</strong>
+                  <span>{{ cell.date|date:'d-m-Y' }}</span>
+                </div>
+                {% if cell.editable %}
+                  <form method="post" action="/app/scheduling/assign/" class="scheduling-edit-form">
+                    {% csrf_token %}
+                    <input type="hidden" name="month" value="{{ month_value }}">
+                    <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+                    <input type="hidden" name="worker_q" value="{{ worker_query|default:'' }}">
+                    <input type="hidden" name="focus_date" value="{{ focus_date_value|default:'' }}">
+                    <input type="hidden" name="worker_id" value="{{ row.worker.id }}">
+                    <input type="hidden" name="work_date" value="{{ cell.date|date:'Y-m-d' }}">
+                    <select name="assignment_value" onchange="this.form.submit()">
+                      <option value="">--</option>
+                      {% for shift in cell.shift_options %}
+                        <option value="shift:{{ shift.id }}" {% if cell.selected_shift_id == shift.id %}selected{% endif %}>
+                          {{ shift.start_time|time:"H:i" }}-{{ shift.end_time|time:"H:i" }} ({{ shift.name }})
+                        </option>
+                      {% endfor %}
+                      {% for state in cell.state_options %}
+                        <option value="state:{{ state.id }}" {% if cell.selected_state_id == state.id %}selected{% endif %}>
+                          {{ state.buk_code|default:state.name }} ({{ state.name }})
+                        </option>
+                      {% endfor %}
+                    </select>
+                    <span class="assignment-code {% if not cell.display_code %}is-empty{% endif %}">{{ cell.display_code|default:'-' }}</span>
+                  </form>
+                {% else %}
+                  <span class="assignment-code {% if not cell.display_code %}is-empty{% endif %}">{{ cell.display_code|default:'-' }}</span>
+                {% endif %}
+              </div>
+            {% endfor %}
+          </div>
+        </article>
+      {% empty %}
+        <p class="muted">No hay trabajadores activos para este filtro.</p>
+      {% endfor %}
+    </div>
+  </section>
+  <script>
+    (function () {
+      var params = new URLSearchParams(window.location.search);
+      var postForms = document.querySelectorAll('form[method="post"]');
+
+      function propagateParamToPostForms(paramName) {
+        var currentValue = params.get(paramName) || "";
+        if (!currentValue) return;
+        postForms.forEach(function (form) {
+          var existing = form.querySelector('input[name="' + paramName + '"]');
+          if (!existing) {
+            var hidden = document.createElement("input");
+            hidden.type = "hidden";
+            hidden.name = paramName;
+            hidden.value = currentValue;
+            form.appendChild(hidden);
+          } else if (!existing.value) {
+            existing.value = currentValue;
+          }
+        });
+      }
+      propagateParamToPostForms("worker_q");
+      propagateParamToPostForms("focus_date");
+
+      var focusDate = params.get("focus_date") || "";
+      if (focusDate) {
+        var wrap = document.getElementById("scheduling-table-wrap");
+        var focusHeader = document.querySelector('th[data-day-date="' + focusDate + '"]');
+        if (wrap && focusHeader) {
+          var desiredLeft = focusHeader.offsetLeft - wrap.clientWidth / 2 + focusHeader.clientWidth / 2;
+          wrap.scrollLeft = Math.max(0, desiredLeft);
+        }
+      }
+
+      var rows = document.getElementById("multi-range-rows");
+      var template = document.getElementById("multi-range-row-template");
+      var addButton = document.getElementById("add-range-row");
+      var removeButton = document.getElementById("remove-range-row");
+      var saveTemplateButton = document.getElementById("save-range-template-button");
+      var saveTemplateHidden = document.getElementById("save-range-template-hidden-fields");
+      var updateTemplateButton = document.getElementById("update-range-template-ranges-button");
+      var updateTemplateHidden = document.getElementById("update-range-template-hidden-fields");
+      var createVersionButton = document.getElementById("create-range-template-version-button");
+      var createVersionHidden = document.getElementById("create-range-template-version-hidden-fields");
+      if (!rows || !template || !addButton || !removeButton) return;
+
+      var minRows = 1;
+      var maxRows = 20;
+
+      function updateButtons() {
+        removeButton.disabled = rows.children.length <= minRows;
+        addButton.disabled = rows.children.length >= maxRows;
+      }
+
+      addButton.addEventListener("click", function () {
+        if (rows.children.length >= maxRows) return;
+        rows.appendChild(template.content.firstElementChild.cloneNode(true));
+        updateButtons();
+      });
+
+      removeButton.addEventListener("click", function () {
+        if (rows.children.length <= minRows) return;
+        rows.removeChild(rows.lastElementChild);
+        updateButtons();
+      });
+
+      function syncRowsIntoHidden(targetElement) {
+          targetElement.innerHTML = "";
+          var currentRows = rows.querySelectorAll("tr");
+          currentRows.forEach(function (row) {
+            var fromInput = row.querySelector('input[name="range_date_from"]');
+            var toInput = row.querySelector('input[name="range_date_to"]');
+            var stateInput = row.querySelector('select[name="range_state_id"]');
+            var fromValue = fromInput ? fromInput.value : "";
+            var toValue = toInput ? toInput.value : "";
+            var stateValue = stateInput ? stateInput.value : "";
+            function appendHidden(name, value) {
+              var input = document.createElement("input");
+              input.type = "hidden";
+              input.name = name;
+              input.value = value;
+              targetElement.appendChild(input);
+            }
+            appendHidden("range_date_from", fromValue);
+            appendHidden("range_date_to", toValue);
+            appendHidden("range_state_id", stateValue);
+          });
+      }
+
+      if (saveTemplateButton && saveTemplateHidden) {
+        saveTemplateButton.addEventListener("click", function () {
+          syncRowsIntoHidden(saveTemplateHidden);
+          document.getElementById("save-range-template-form").submit();
+        });
+      }
+      if (updateTemplateButton && updateTemplateHidden) {
+        updateTemplateButton.addEventListener("click", function () {
+          syncRowsIntoHidden(updateTemplateHidden);
+          document.getElementById("update-range-template-ranges-form").submit();
+        });
+      }
+      if (createVersionButton && createVersionHidden) {
+        createVersionButton.addEventListener("click", function () {
+          syncRowsIntoHidden(createVersionHidden);
+          document.getElementById("create-range-template-version-form").submit();
+        });
+      }
+
+      updateButtons();
+    })();
+  </script>
+{% endblock %}

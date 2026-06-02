@@ -10,6 +10,7 @@ def healthcheck(_request):
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("health/", healthcheck, name="healthcheck"),
+    path("", include("apps.webui.urls")),
     path("api/auth/", include("apps.users.urls")),
     path("api/", include("apps.users.api_urls")),
     path("api/", include("apps.tenants.urls")),

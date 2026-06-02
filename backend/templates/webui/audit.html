@@ -1,0 +1,92 @@
+{% extends "webui/base.html" %}
+{% block title %}{% if audit_title %}{{ audit_title }}{% else %}Auditoria{% endif %} - Pariwana Scheduler{% endblock %}
+{% block content %}
+  <section class="panel" style="margin-bottom: 12px;">
+    <h3 style="margin-top: 0;">{% if audit_title %}{{ audit_title }}{% else %}Auditoria{% endif %}</h3>
+    <form method="get" action="{% if audit_form_action %}{{ audit_form_action }}{% else %}/app/audit/{% endif %}" style="display:flex; gap:8px; align-items:end; flex-wrap:wrap;">
+      {% if is_global_audit %}
+        <div>
+          <label>Tenant</label>
+          <select name="tenant_id">
+            <option value="">Todos</option>
+            {% for tenant in tenant_filter_options %}
+              <option value="{{ tenant.id }}" {% if filter_tenant_id == tenant.id|stringformat:"s" %}selected{% endif %}>{{ tenant.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>Sede</label>
+          <select name="property_id">
+            <option value="">Todas</option>
+            {% for property in property_filter_options %}
+              <option value="{{ property.id }}" {% if filter_property_id == property.id|stringformat:"s" %}selected{% endif %}>{{ property.tenant.name }} / {{ property.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      {% endif %}
+      <div>
+        <label>Accion</label>
+        <input type="text" name="action" value="{{ filter_action }}" placeholder="month_close, schedule_assignment_upsert">
+      </div>
+      <div>
+        <label>Entidad</label>
+        <input type="text" name="entity_type" value="{{ filter_entity_type }}" placeholder="Worker, MonthClosure">
+      </div>
+      <div>
+        <label>Usuario</label>
+        <input type="text" name="user_email" value="{{ filter_user_email }}" placeholder="correo">
+      </div>
+      <div>
+        <label>Desde</label>
+        <input type="date" name="date_from" value="{{ filter_date_from }}">
+      </div>
+      <div>
+        <label>Hasta</label>
+        <input type="date" name="date_to" value="{{ filter_date_to }}">
+      </div>
+      <button class="primary" type="submit">Aplicar</button>
+    </form>
+  </section>
+
+  <section class="panel" style="overflow:auto;">
+    <h3 style="margin-top: 0;">Registros (max 300)</h3>
+    {% if rows %}
+      <table>
+        <thead>
+          <tr>
+            <th>Fecha</th>
+            {% if is_global_audit %}
+              <th>Tenant</th>
+              <th>Sede</th>
+            {% endif %}
+            <th>Usuario</th>
+            <th>Accion</th>
+            <th>Entidad</th>
+            <th>ID entidad</th>
+            <th>Antes</th>
+            <th>Despues</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td>{{ row.created_at|date:"d-m-Y H:i:s" }}</td>
+              {% if is_global_audit %}
+                <td>{% if row.tenant %}{{ row.tenant.name }}{% else %}-{% endif %}</td>
+                <td>{% if row.property %}{{ row.property.name }}{% else %}-{% endif %}</td>
+              {% endif %}
+              <td>{% if row.user %}{{ row.user.email }}{% else %}-{% endif %}</td>
+              <td>{{ row.action }}</td>
+              <td>{{ row.entity_type }}</td>
+              <td>{{ row.entity_id }}</td>
+              <td><pre style="white-space:pre-wrap; margin:0; font-size:11px;">{{ row.before }}</pre></td>
+              <td><pre style="white-space:pre-wrap; margin:0; font-size:11px;">{{ row.after }}</pre></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">No hay registros para los filtros seleccionados.</p>
+    {% endif %}
+  </section>
+{% endblock %}

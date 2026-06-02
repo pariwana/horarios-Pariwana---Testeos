@@ -34,10 +34,35 @@ class RoleChoices(models.TextChoices):
     SUPERVISOR = "supervisor", "Supervisor"
 
 
+class RoleProfile(TimestampedModel):
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="role_profiles")
+    code = models.SlugField(max_length=80)
+    name = models.CharField(max_length=120)
+    base_role = models.CharField(max_length=20, choices=RoleChoices.choices)
+    description = models.TextField(blank=True)
+    permissions = models.JSONField(default=dict, blank=True)
+    is_system = models.BooleanField(default=False)
+    active = models.BooleanField(default=True)
+
+    class Meta:
+        unique_together = [("tenant", "code")]
+        ordering = ["base_role", "name"]
+
+    def __str__(self) -> str:
+        return f"{self.tenant.slug} - {self.name}"
+
+
 class UserTenantRole(TimestampedModel):
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="tenant_roles")
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="user_roles")
     role = models.CharField(max_length=20, choices=RoleChoices.choices)
+    role_profile = models.ForeignKey(
+        RoleProfile,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="user_assignments",
+    )
 
     class Meta:
         unique_together = [("user", "tenant")]
@@ -55,6 +80,10 @@ class UserPropertyPermission(TimestampedModel):
     can_export_buk = models.BooleanField(default=False)
     can_manage_workers = models.BooleanField(default=False)
     can_manage_shifts = models.BooleanField(default=False)
+    can_manage_areas = models.BooleanField(default=False)
+    can_manage_users = models.BooleanField(default=False)
+    can_view_reports = models.BooleanField(default=False)
+    can_use_control = models.BooleanField(default=False)
 
     class Meta:
         unique_together = [("user", "tenant", "property")]

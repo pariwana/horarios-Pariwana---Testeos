@@ -1,10 +1,14 @@
 from django.test import TestCase
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from rest_framework.test import APIClient
 
+from apps.modules.models import ModuleActivation
+from apps.scheduling.models import ScheduleAssignment
 from apps.audit.models import AuditLog
 from apps.tenants.models import Property, Tenant, TenantStatus, TenantSupportAccessSession
 from apps.users.models import RoleChoices, User, UserTenantRole
-from apps.workers.models import Area, Worker
+from apps.workers.models import Area, Shift, SpecialState, Worker
 
 
 class TenantModelTests(TestCase):
@@ -264,3 +268,85 @@ class TenantSupportAccessTests(TestCase):
         properties_payload = properties_response.json()
         self.assertEqual(len(properties_payload), 1)
         self.assertEqual(properties_payload[0]["id"], self.property.id)
+
+
+class SeedDemoCuscoDataCommandTests(TestCase):
+    def test_seed_demo_cusco_data_creates_operational_dataset(self):
+        call_command("seed_demo_cusco_data", days=7)
+
+        tenant = Tenant.objects.get(slug="pariwana-hostels")
+        cusco = Property.objects.get(tenant=tenant, slug="pariwana-cusco")
+        lima = Property.objects.get(tenant=tenant, slug="pariwana-lima")
+
+        self.assertEqual(cusco.name, "Pariwana Cusco")
+        self.assertEqual(lima.name, "Pariwana Lima")
+        self.assertTrue(ModuleActivation.objects.filter(tenant=tenant, module_key="scheduling", is_enabled=True).exists())
+        self.assertTrue(Area.objects.filter(tenant=tenant, property=cusco, name="Recepcion").exists())
+        self.assertTrue(Shift.objects.filter(tenant=tenant, property=cusco, buk_code="REC-M").exists())
+        self.assertTrue(SpecialState.objects.filter(tenant=tenant, property=cusco, name="OFF").exists())
+        self.assertTrue(Worker.objects.filter(tenant=tenant, property=cusco, document_number="70100101").exists())
+        self.assertGreaterEqual(
+            ScheduleAssignment.objects.filter(tenant=tenant, property=cusco).count(),
+            12 * 7,
+        )
+
+    def test_seed_demo_cusco_data_is_idempotent(self):
+        call_command("seed_demo_cusco_data", days=3)
+        call_command("seed_demo_cusco_data", days=3)
+
+        tenant = Tenant.objects.get(slug="pariwana-hostels")
+        cusco = Property.objects.get(tenant=tenant, slug="pariwana-cusco")
+        self.assertEqual(Worker.objects.filter(tenant=tenant, property=cusco).count(), 12)
+        self.assertEqual(Shift.objects.filter(tenant=tenant, property=cusco).count(), 8)
+        self.assertEqual(SpecialState.objects.filter(tenant=tenant, property=cusco).count(), 3)
+
+    def test_seed_demo_cusco_data_handles_existing_shift_name_with_other_code(self):
+        tenant = Tenant.objects.create(name="Pariwana Hostels", slug="pariwana-hostels")
+        cusco = Property.objects.create(tenant=tenant, name="Pariwana Cusco", slug="pariwana-cusco")
+        area = Area.objects.create(tenant=tenant, property=cusco, name="Recepcion")
+        Shift.objects.create(
+            tenant=tenant,
+            property=cusco,
+            area=area,
+            name="Recepcion_Manana",
+            buk_code="LEGACY-REC-M",
+            start_time="07:00",
+            end_time="15:00",
+            is_night_shift=False,
+            active=True,
+        )
+
+        call_command("seed_demo_cusco_data", days=2)
+        self.assertTrue(
+            Shift.objects.filter(
+                tenant=tenant,
+                property=cusco,
+                name="Recepcion_Manana",
+            ).exists()
+        )
+
+
+class BootstrapLocalDemoCommandTests(TestCase):
+    def test_bootstrap_local_demo_creates_full_minimum_dataset(self):
+        call_command(
+            "bootstrap_local_demo",
+            password="StrongPass123",
+            days=5,
+            supervisor_areas="Recepcion,Housekeeping",
+        )
+
+        tenant = Tenant.objects.get(slug="pariwana-hostels")
+        cusco = Property.objects.get(tenant=tenant, slug="pariwana-cusco")
+        lima = Property.objects.get(tenant=tenant, slug="pariwana-lima")
+        self.assertEqual(cusco.name, "Pariwana Cusco")
+        self.assertEqual(lima.name, "Pariwana Lima")
+        self.assertGreaterEqual(Area.objects.filter(tenant=tenant, property=cusco).count(), 4)
+        self.assertGreaterEqual(Worker.objects.filter(tenant=tenant, property=cusco).count(), 10)
+        self.assertGreaterEqual(ScheduleAssignment.objects.filter(tenant=tenant, property=cusco).count(), 50)
+        self.assertTrue(User.objects.filter(email="admin.demo@pariwana.local").exists())
+        self.assertTrue(User.objects.filter(email="operador.demo@pariwana.local").exists())
+        self.assertTrue(User.objects.filter(email="supervisor.demo@pariwana.local").exists())
+
+    def test_bootstrap_local_demo_rejects_invalid_days(self):
+        with self.assertRaises(CommandError):
+            call_command("bootstrap_local_demo", password="StrongPass123", days=0)

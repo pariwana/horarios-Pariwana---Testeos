@@ -38,6 +38,19 @@ Regla general:
 - `/api/special-states/`
 - `/api/assignments/`
 - `GET /api/assignments/control-next-15-days/`
+- `POST /api/assignments/bulk-range-state/`
+- `POST /api/assignments/bulk-sundays-state/`
+- `POST /api/assignments/bulk-week-pattern/`
+- `POST /api/assignments/copy-week/`
+- `POST /api/assignments/copy-previous-month/`
+- `GET /api/assignments/week-pattern-templates/`
+- `POST /api/assignments/save-week-pattern-template/`
+- `POST /api/assignments/update-week-pattern-template/`
+- `POST /api/assignments/delete-week-pattern-template/`
+- `POST /api/assignments/apply-week-pattern-template/`
+
+Nota para operaciones masivas:
+- `bulk-range-state`, `bulk-sundays-state`, `bulk-week-pattern`, `copy-week`, `copy-previous-month` y `apply-week-pattern-template` aceptan `dry_run=true` para vista previa de impacto (`to_create`, `to_update`, `unchanged`) sin persistir cambios.
 
 ## Imports
 - `POST /api/imports/excel-preview/`
@@ -50,6 +63,12 @@ Regla general:
 - `POST /api/buk/validate/`
 - `POST /api/buk/preview/`
 - `POST /api/buk/export/` (format: `xlsx` o `csv`)
+- `POST /api/buk/compare-template/` (multipart con `reference_file`)
+  - opcional: `download_report=true` para descargar evidencia JSON adjunta.
+  - respuesta JSON incluye `compare_log_id` para trazabilidad persistida.
+- `GET /api/buk/compare-template-logs/` (historial; filtros `is_compatible`, `user`, `compared_from`, `compared_to`, `page`, `page_size`; incluye metadata de paginacion)
+- `GET /api/buk/compare-template-logs/{id}/download/` (JSON persistido por log)
+- `GET /api/buk/compare-template-logs/export-csv/` (CSV del historial filtrado)
 
 ## Cierre de mes / Auditoria
 - `POST /api/month-closure/close/`

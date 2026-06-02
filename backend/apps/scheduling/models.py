@@ -50,3 +50,77 @@ class ScheduleAssignment(TimestampedModel):
             raise ValidationError("El turno no pertenece a la sede seleccionada.")
         if self.special_state and self.special_state.property_id != self.property_id:
             raise ValidationError("El estado especial no pertenece a la sede seleccionada.")
+
+
+class SchedulePatternTemplate(TimestampedModel):
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="schedule_pattern_templates")
+    property = models.ForeignKey(Property, on_delete=models.CASCADE, related_name="schedule_pattern_templates")
+    area = models.ForeignKey(
+        "workers.Area",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="schedule_pattern_templates",
+    )
+    name = models.CharField(max_length=120)
+    pattern = models.JSONField(default=dict)
+    active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_schedule_pattern_templates",
+    )
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="updated_schedule_pattern_templates",
+    )
+
+    class Meta:
+        ordering = ["name", "id"]
+        unique_together = [("tenant", "property", "area", "name")]
+
+    def clean(self):
+        if self.area_id and self.area.property_id != self.property_id:
+            raise ValidationError("El area de la plantilla no pertenece a la sede seleccionada.")
+
+
+class ScheduleRangeTemplate(TimestampedModel):
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="schedule_range_templates")
+    property = models.ForeignKey(Property, on_delete=models.CASCADE, related_name="schedule_range_templates")
+    area = models.ForeignKey(
+        "workers.Area",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="schedule_range_templates",
+    )
+    name = models.CharField(max_length=120)
+    ranges = models.JSONField(default=list)
+    active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_schedule_range_templates",
+    )
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="updated_schedule_range_templates",
+    )
+
+    class Meta:
+        ordering = ["name", "id"]
+        unique_together = [("tenant", "property", "area", "name")]
+
+    def clean(self):
+        if self.area_id and self.area.property_id != self.property_id:
+            raise ValidationError("El area de la plantilla no pertenece a la sede seleccionada.")

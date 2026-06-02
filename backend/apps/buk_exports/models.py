@@ -41,3 +41,29 @@ class BukExportLog(TimestampedModel):
     validation_status = models.CharField(max_length=30, default="unknown")
     errors_count = models.PositiveIntegerField(default=0)
     warnings_count = models.PositiveIntegerField(default=0)
+
+
+class BukTemplateCompareLog(TimestampedModel):
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="buk_template_compare_logs")
+    property = models.ForeignKey(Property, on_delete=models.CASCADE, related_name="buk_template_compare_logs")
+    compared_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="buk_template_compare_logs",
+    )
+    compared_at = models.DateTimeField(auto_now_add=True)
+    date_from = models.DateField()
+    date_to = models.DateField()
+    sheet_name = models.CharField(max_length=160, default="Reporte carga BUK")
+    reference_file_name = models.CharField(max_length=255, blank=True)
+    reference_file_sha256 = models.CharField(max_length=64, blank=True)
+    reference_file_size_bytes = models.PositiveIntegerField(default=0)
+    is_compatible = models.BooleanField(default=False)
+    errors_count = models.PositiveIntegerField(default=0)
+    warnings_count = models.PositiveIntegerField(default=0)
+    result_payload = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ["-compared_at", "-id"]

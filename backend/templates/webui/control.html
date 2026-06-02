@@ -1,0 +1,214 @@
+{% extends "webui/base.html" %}
+{% block title %}Control 15 dias - Pariwana Scheduler{% endblock %}
+{% block content %}
+  <style>
+    .control-hero {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
+    .control-kpis {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 10px;
+    }
+    .control-kpi {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px;
+      background: #fafafa;
+    }
+    .area-alert-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .area-alert-card {
+      border: 1px solid var(--line);
+      border-left: 5px solid var(--accent);
+      border-radius: 6px;
+      padding: 12px;
+      background: #fff;
+    }
+    .area-alert-card.is-high { border-left-color: #b91c1c; background: #fff7f7; }
+    .area-alert-card.is-medium { border-left-color: #b45309; background: #fffbeb; }
+    .area-alert-card.is-low { border-left-color: #0f766e; background: #f0fdfa; }
+    .area-alert-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    .risk-pill {
+      border-radius: 999px;
+      padding: 4px 8px;
+      font-size: 12px;
+      font-weight: 700;
+      background: #e5e7eb;
+      white-space: nowrap;
+    }
+    .area-alert-card.is-high .risk-pill { color: #7f1d1d; background: #fee2e2; }
+    .area-alert-card.is-medium .risk-pill { color: #78350f; background: #fef3c7; }
+    .area-alert-card.is-low .risk-pill { color: #134e4a; background: #ccfbf1; }
+    .coverage-bar {
+      height: 8px;
+      border-radius: 999px;
+      background: #e5e7eb;
+      overflow: hidden;
+      margin: 8px 0 10px;
+    }
+    .coverage-fill {
+      height: 100%;
+      background: var(--accent);
+    }
+    .area-alert-card.is-high .coverage-fill { background: #b91c1c; }
+    .area-alert-card.is-medium .coverage-fill { background: #b45309; }
+    .control-mobile-list { display: none; }
+    @media (max-width: 980px) {
+      .control-kpis,
+      .area-alert-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 640px) {
+      .control-kpis,
+      .area-alert-grid { grid-template-columns: 1fr; }
+      .control-detail-table { display: none; }
+      .control-mobile-list {
+        display: grid;
+        gap: 10px;
+      }
+      .control-mobile-card {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 10px;
+        background: #fff;
+      }
+      .control-mobile-card a {
+        display: inline-block;
+        margin-top: 8px;
+      }
+    }
+  </style>
+
+  <section class="panel" style="margin-bottom: 12px;">
+    <div class="control-hero">
+      <div>
+        <h3 style="margin-top: 0;">Control proximos 15 dias</h3>
+        <p class="muted">Rango: {{ start_date|date:"d-m-Y" }} a {{ end_date|date:"d-m-Y" }}</p>
+      </div>
+      <a href="/app/control/"><button type="button">Actualizar</button></a>
+    </div>
+    <div class="control-kpis">
+      <div class="control-kpi">
+        <div class="muted">Pendientes</div>
+        <div class="kpi">{{ pending_count }}</div>
+      </div>
+      <div class="control-kpi">
+        <div class="muted">Areas afectadas</div>
+        <div class="kpi">{{ affected_areas }}</div>
+      </div>
+      <div class="control-kpi">
+        <div class="muted">Trabajadores afectados</div>
+        <div class="kpi">{{ affected_workers }}</div>
+      </div>
+      <div class="control-kpi">
+        <div class="muted">Sede</div>
+        <div class="kpi" style="font-size: 18px;">{{ selected_property.name }}</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel" style="margin-bottom: 12px; overflow:auto;">
+    <h3 style="margin-top: 0;">Resumen por area</h3>
+    {% if area_summary %}
+      <div class="area-alert-grid">
+        {% for row in area_summary %}
+          <article class="area-alert-card is-{{ row.risk_class }}">
+            <div class="area-alert-header">
+              <strong>{{ row.area }}</strong>
+              <span class="risk-pill">Alerta {{ row.risk_level }}</span>
+            </div>
+            <div class="muted">Cobertura {{ row.coverage_percent }}%</div>
+            <div class="coverage-bar" aria-label="Cobertura {{ row.coverage_percent }}%">
+              <div class="coverage-fill" style="width: {{ row.coverage_percent }}%;"></div>
+            </div>
+            <div class="muted">{{ row.affected_workers }} trabajadores con faltantes</div>
+            <div class="muted">{{ row.missing_days }} dias sin asignacion de {{ row.required_days }} dias requeridos</div>
+          </article>
+        {% endfor %}
+      </div>
+    {% endif %}
+    <table>
+      <thead>
+        <tr>
+          <th>Area</th>
+          <th>Nivel</th>
+          <th>Trabajadores con faltantes</th>
+          <th>Dias sin asignacion</th>
+          <th>Cobertura</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in area_summary %}
+          <tr>
+            <td>{{ row.area }}</td>
+            <td>{{ row.risk_level }}</td>
+            <td>{{ row.affected_workers }}</td>
+            <td>{{ row.missing_days }} / {{ row.required_days }}</td>
+            <td>{{ row.coverage_percent }}%</td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="5" class="muted">Sin alertas por area.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="panel" style="overflow:auto;">
+    <h3 style="margin-top: 0;">Detalle de pendientes</h3>
+    <table class="control-detail-table">
+      <thead>
+        <tr>
+          <th>Fecha</th>
+          <th>Area</th>
+          <th>Trabajador</th>
+          <th>DNI</th>
+          <th>Accion</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+          <tr>
+            <td>{{ row.date|date:"d-m-Y" }}</td>
+            <td>{{ row.area }}</td>
+            <td>{{ row.worker_name }}</td>
+            <td>{{ row.document_number }}</td>
+            <td><a href="{{ row.go_url }}">Corregir</a></td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="5" class="muted">Sin pendientes en el rango.</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="control-mobile-list">
+      {% for row in rows %}
+        <article class="control-mobile-card">
+          <strong>{{ row.worker_name }}</strong>
+          <div class="muted">{{ row.area }} | DNI {{ row.document_number }}</div>
+          <div>{{ row.date|date:"d-m-Y" }}</div>
+          <a href="{{ row.go_url }}">Corregir</a>
+        </article>
+      {% empty %}
+        <p class="muted">Sin pendientes en el rango.</p>
+      {% endfor %}
+    </div>
+  </section>
+{% endblock %}

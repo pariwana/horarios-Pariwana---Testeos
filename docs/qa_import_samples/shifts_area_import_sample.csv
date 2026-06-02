@@ -1,0 +1,21 @@
+﻿Area,Turno,Codigo BUK,Hora Inicio,Hora Fin,Inicio Break,Fin Break,Nocturno,Activo,Sede
+Actividades,AUTO_1400-1800,AUTO-9-1400-1800,14:00,18:00,,,0,1,Pariwana Cusco
+Actividades,AUTO_1500-1900,AUTO-9-1500-1900,15:00,19:00,,,0,1,Pariwana Cusco
+Actividades,Actividades(1),ACTIV.(1),14:00,23:00,19:00,20:00,0,1,Pariwana Cusco
+Actividades,Actividades(2),ACTIV.(2),15:00,00:00,19:00,20:00,0,1,Pariwana Cusco
+Actividades,Actividades(3),ACTIV.(3),16:00,01:00,19:00,20:00,0,1,Pariwana Cusco
+Actividades,Actividades(4),ACTIV.(4),17:00,02:00,19:00,20:00,0,1,Pariwana Cusco
+Administración,AUTO_0600-1445,AUTO-7-0600-1445,06:00,14:45,,,0,1,Pariwana Cusco
+Bar,AUTO_0730-1615,AUTO-3-0730-1615,07:30,16:15,,,0,1,Pariwana Cusco
+Bar,AUTO_1515-0000,AUTO-3-1515-0000,15:15,00:00,,,1,1,Pariwana Cusco
+Bar,AUTO_1615-0100,AUTO-3-1615-0100,16:15,01:00,,,1,1,Pariwana Cusco
+Bar,AUTO_1700-0145,AUTO-3-1700-0145,17:00,01:45,,,1,1,Pariwana Cusco
+Bar,Bar_Desayuno,BAR-DES,07:00,16:00,15:00,16:00,0,1,Pariwana Cusco
+Bar,Bar_Tarde,BAR-T,15:15,00:00,,,1,1,Pariwana Cusco
+Bar,Bar_Tarde(1),BAR-TRD(1),14:00,23:00,16:00,17:00,0,1,Pariwana Cusco
+Bar,Bar_Tarde(2),BAR-TRD(2),16:00,01:00,18:00,19:00,0,1,Pariwana Cusco
+Cocina,AUTO_0600-1445,AUTO-4-0600-1445,06:00,14:45,,,0,1,Pariwana Cusco
+Cocina,Cocina_Manana,COC-M,06:00,14:45,,,0,1,Pariwana Cusco
+Cocina,Cocina_Mañana,COCINA-MÑN,07:00,16:00,15:00,16:00,0,1,Pariwana Cusco
+Cocina,Cocina_Tarde,COC-T,14:45,23:00,17:00,18:00,0,1,Pariwana Cusco
+Housekeeping,HK_Mañana,HK-MÑN,08:00,17:00,15:00,16:00,0,1,Pariwana Cusco

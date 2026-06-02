@@ -1,4 +1,6 @@
 from django.test import TestCase
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.urls import reverse
 from rest_framework.test import APIClient
 
@@ -55,6 +57,7 @@ class PermissionServiceTests(TestCase):
         self.property = Property.objects.create(tenant=self.tenant, name="Pariwana Cusco", slug="pariwana-cusco")
         self.user = User.objects.create_user(email="supervisor@pariwana.test", password="StrongPass123")
         self.area = Area.objects.create(tenant=self.tenant, property=self.property, name="Recepción")
+        self.area_2 = Area.objects.create(tenant=self.tenant, property=self.property, name="Housekeeping")
 
     def test_supervisor_limited_by_area(self):
         UserTenantRole.objects.create(user=self.user, tenant=self.tenant, role=RoleChoices.SUPERVISOR)
@@ -88,6 +91,84 @@ class PermissionServiceTests(TestCase):
                 tenant=self.tenant,
                 property_obj=self.property,
                 area=self.area,
+            )
+        )
+        self.assertFalse(
+            PermissionService.user_can_area_view(
+                user=self.user,
+                tenant=self.tenant,
+                property_obj=self.property,
+                area=self.area_2,
+            )
+        )
+
+    def test_operator_without_area_permissions_can_schedule_all_areas(self):
+        operator = User.objects.create_user(email="operator-all@pariwana.test", password="StrongPass123")
+        UserTenantRole.objects.create(user=operator, tenant=self.tenant, role=RoleChoices.OPERATOR)
+        UserPropertyPermission.objects.create(
+            user=operator,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+            can_schedule=True,
+        )
+        self.assertTrue(
+            PermissionService.user_can_area_view(
+                user=operator,
+                tenant=self.tenant,
+                property_obj=self.property,
+                area=self.area,
+            )
+        )
+        self.assertTrue(
+            PermissionService.user_can_area_schedule(
+                user=operator,
+                tenant=self.tenant,
+                property_obj=self.property,
+                area=self.area_2,
+            )
+        )
+
+    def test_operator_with_area_permissions_is_limited_to_configured_areas(self):
+        operator = User.objects.create_user(email="operator-limited@pariwana.test", password="StrongPass123")
+        UserTenantRole.objects.create(user=operator, tenant=self.tenant, role=RoleChoices.OPERATOR)
+        UserPropertyPermission.objects.create(
+            user=operator,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+            can_schedule=True,
+        )
+        UserAreaPermission.objects.create(
+            user=operator,
+            tenant=self.tenant,
+            property=self.property,
+            area=self.area,
+            can_view=True,
+            can_schedule=True,
+        )
+        self.assertTrue(
+            PermissionService.user_can_area_schedule(
+                user=operator,
+                tenant=self.tenant,
+                property_obj=self.property,
+                area=self.area,
+            )
+        )
+        self.assertFalse(
+            PermissionService.user_can_area_view(
+                user=operator,
+                tenant=self.tenant,
+                property_obj=self.property,
+                area=self.area_2,
+            )
+        )
+        self.assertFalse(
+            PermissionService.user_can_area_schedule(
+                user=operator,
+                tenant=self.tenant,
+                property_obj=self.property,
+                area=self.area_2,
             )
         )
 
@@ -191,3 +272,81 @@ class SupportContextUserViewsTests(TestCase):
         rows = response.json()
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["tenant"], self.tenant.id)
+
+
+class SeedDemoUsersCommandTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(name="Pariwana Hostels", slug="pariwana-hostels")
+        self.property = Property.objects.create(tenant=self.tenant, name="Pariwana Cusco", slug="pariwana-cusco")
+        self.area_1 = Area.objects.create(tenant=self.tenant, property=self.property, name="Recepcion")
+        self.area_2 = Area.objects.create(tenant=self.tenant, property=self.property, name="Housekeeping")
+        self.area_3 = Area.objects.create(tenant=self.tenant, property=self.property, name="Bar")
+
+    def test_seed_demo_users_creates_roles_and_permissions(self):
+        call_command(
+            "seed_demo_users",
+            password="StrongPass123",
+            supervisor_areas="Recepcion,Housekeeping",
+        )
+
+        admin = User.objects.get(email="admin.demo@pariwana.local")
+        operator = User.objects.get(email="operador.demo@pariwana.local")
+        supervisor = User.objects.get(email="supervisor.demo@pariwana.local")
+
+        self.assertTrue(UserTenantRole.objects.filter(user=admin, tenant=self.tenant, role=RoleChoices.ADMIN).exists())
+        self.assertTrue(
+            UserPropertyPermission.objects.filter(
+                user=admin,
+                tenant=self.tenant,
+                property=self.property,
+                can_manage_workers=True,
+                can_manage_shifts=True,
+            ).exists()
+        )
+        self.assertTrue(UserTenantRole.objects.filter(user=operator, tenant=self.tenant, role=RoleChoices.OPERATOR).exists())
+        self.assertEqual(
+            UserAreaPermission.objects.filter(user=operator, tenant=self.tenant, property=self.property).count(),
+            3,
+        )
+        self.assertTrue(UserTenantRole.objects.filter(user=supervisor, tenant=self.tenant, role=RoleChoices.SUPERVISOR).exists())
+        self.assertEqual(
+            UserAreaPermission.objects.filter(user=supervisor, tenant=self.tenant, property=self.property).count(),
+            2,
+        )
+        self.assertTrue(
+            UserAreaPermission.objects.filter(
+                user=supervisor,
+                tenant=self.tenant,
+                property=self.property,
+                area=self.area_1,
+            ).exists()
+        )
+
+    def test_seed_demo_users_is_idempotent(self):
+        call_command("seed_demo_users", password="StrongPass123")
+        call_command("seed_demo_users", password="StrongPass123")
+
+        self.assertEqual(User.objects.filter(email__endswith="@pariwana.local").count(), 3)
+        self.assertEqual(UserTenantRole.objects.filter(tenant=self.tenant).count(), 3)
+
+
+class ValidateDemoSetupCommandTests(TestCase):
+    def test_validate_demo_setup_passes_after_bootstrap(self):
+        call_command(
+            "bootstrap_local_demo",
+            password="StrongPass123",
+            days=7,
+            supervisor_areas="Recepcion,Housekeeping",
+        )
+        call_command("validate_demo_setup")
+
+    def test_validate_demo_setup_fails_when_supervisor_missing(self):
+        call_command(
+            "bootstrap_local_demo",
+            password="StrongPass123",
+            days=5,
+            supervisor_areas="Recepcion,Housekeeping",
+        )
+        User.objects.filter(email="supervisor.demo@pariwana.local").delete()
+        with self.assertRaises(CommandError):
+            call_command("validate_demo_setup")

@@ -1,0 +1,186 @@
+{% extends "webui/base.html" %}
+{% block title %}Importaciones - Pariwana Scheduler{% endblock %}
+{% block content %}
+  <div class="grid-2" style="margin-bottom: 12px; align-items: start;">
+    {% if can_import_workers %}
+      <section class="panel">
+        <h3 style="margin-top: 0;">Importar trabajadores (CSV/XLSX)</h3>
+        <p style="margin-top: 0;">
+          <a href="/app/imports/workers-template/">Descargar plantilla XLSX de trabajadores</a>
+          <span class="muted">|</span>
+          <a href="/app/imports/workers-sample/">Muestra QA XLSX</a>
+          <span class="muted">|</span>
+          <a href="/app/imports/workers-sample/?format=csv">Muestra QA CSV</a>
+        </p>
+        <form method="post" enctype="multipart/form-data" class="stack">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="preview_workers">
+          <div>
+            <label>Archivo</label>
+            <input type="file" name="file" accept=".csv,.xlsx" required>
+          </div>
+          <label style="display:flex; gap:8px; align-items:center; margin:0;">
+            <input type="checkbox" name="create_missing_areas" value="1">
+            Crear areas faltantes automaticamente
+          </label>
+          <button class="primary" type="submit">Generar vista previa</button>
+        </form>
+      </section>
+    {% endif %}
+
+    {% if can_import_shifts %}
+      <section class="panel">
+        <h3 style="margin-top: 0;">Importar turnos por area (XLSX/CSV)</h3>
+        <p style="margin-top: 0;">
+          <a href="/app/imports/shifts-template/">Descargar plantilla XLSX de turnos</a>
+          <span class="muted">|</span>
+          <a href="/app/imports/shifts-sample/">Muestra QA XLSX</a>
+          <span class="muted">|</span>
+          <a href="/app/imports/shifts-sample/?format=csv">Muestra QA CSV</a>
+        </p>
+        <form method="post" enctype="multipart/form-data" class="stack">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="preview_shifts_area">
+          <div>
+            <label>Archivo</label>
+            <input type="file" name="file" accept=".csv,.xlsx" required>
+          </div>
+          <label style="display:flex; gap:8px; align-items:center; margin:0;">
+            <input type="checkbox" name="create_missing_areas" value="1">
+            Crear areas faltantes automaticamente
+          </label>
+          <button class="primary" type="submit">Generar vista previa</button>
+        </form>
+      </section>
+    {% endif %}
+
+    {% if can_import_workers %}
+      <section class="panel">
+        <h3 style="margin-top: 0;">Importar Excel original</h3>
+        <form method="post" enctype="multipart/form-data" class="stack">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="preview_excel">
+          <div>
+            <label>Archivo</label>
+            <input type="file" name="file" accept=".xlsx" required>
+          </div>
+          <button class="primary" type="submit">Analizar y previsualizar</button>
+        </form>
+        <p class="muted" style="margin-bottom: 0;">Referencia: pestana "Reporte carga BUK".</p>
+      </section>
+    {% endif %}
+  </div>
+
+  <section class="panel" style="margin-bottom: 12px;">
+    <h3 style="margin-top: 0;">Lotes recientes</h3>
+    {% if batches %}
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Fuente</th>
+            <th>Archivo</th>
+            <th>Estado</th>
+            <th>Fecha</th>
+            <th>Accion</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in batches_rows %}
+            <tr>
+              <td>#{{ row.batch.id }}</td>
+              <td>{{ row.source_label }}</td>
+              <td>{{ row.batch.file_name }}</td>
+              <td>{{ row.status_label }}</td>
+              <td>{{ row.batch.created_at|date:"d-m-Y H:i" }}</td>
+              <td><a href="/app/imports/?batch_id={{ row.batch.id }}">Ver</a></td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="muted">No hay lotes creados.</p>
+    {% endif %}
+  </section>
+
+  {% if selected_batch %}
+    <section class="panel" style="margin-bottom: 12px;">
+      <h3 style="margin-top: 0;">Resumen lote #{{ selected_batch.id }}</h3>
+      <p class="muted">Estado: {{ selected_batch_status_label }} | Fuente: {{ selected_batch_source_label }}</p>
+      <div class="grid-2" style="gap: 8px;">
+        {% for item in selected_batch_summary_rows %}
+          <div style="border:1px solid #e5e7eb; border-radius:6px; padding:8px;">
+            <div class="muted" style="text-transform:capitalize;">{{ item.key }}</div>
+            <div style="margin-top:4px; font-size:13px; word-break:break-word;">
+              {% if item.items %}
+                {% for kv in item.items %}
+                  <div><strong>{{ kv.subkey }}</strong>: {{ kv.subvalue }}</div>
+                {% endfor %}
+              {% elif item.is_block %}
+                <details>
+                  <summary>Ver detalle</summary>
+                  <pre style="white-space:pre-wrap; margin:6px 0 0 0; font-size:11px;">{{ item.value }}</pre>
+                </details>
+              {% else %}
+                {{ item.value }}
+              {% endif %}
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+      {% if selected_batch.status == "preview" %}
+        <div style="display:flex; gap:8px; margin-top: 10px;">
+          <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="confirm_batch">
+            <input type="hidden" name="batch_id" value="{{ selected_batch.id }}">
+            <button class="primary" type="submit">Confirmar importacion</button>
+          </form>
+          <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="cancel_batch">
+            <input type="hidden" name="batch_id" value="{{ selected_batch.id }}">
+            <button type="submit">Cancelar lote</button>
+          </form>
+        </div>
+      {% endif %}
+    </section>
+
+    <section class="panel" style="overflow:auto;">
+      <h3 style="margin-top: 0;">Vista previa (primeras 300 filas)</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Hoja</th>
+            <th>Fila</th>
+            <th>Estado</th>
+            <th>Accion</th>
+            <th>Mensaje</th>
+            <th>Detalle</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in preview_rows %}
+            <tr>
+              <td>{{ row.sheet_name }}</td>
+              <td>{{ row.row_number }}</td>
+              <td>{{ row.status }}</td>
+              <td>{{ row.action }}</td>
+              <td>{{ row.message|default:"-" }}</td>
+              <td>
+                <details>
+                  <summary>Ver</summary>
+                  <pre style="white-space:pre-wrap; margin:6px 0 0 0; font-size:11px;">{{ row.payload_pretty }}</pre>
+                </details>
+              </td>
+            </tr>
+          {% empty %}
+            <tr>
+              <td colspan="6" class="muted">Sin filas de vista previa.</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  {% endif %}
+{% endblock %}

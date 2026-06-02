@@ -1,0 +1,63 @@
+{% extends "webui/base.html" %}
+{% block title %}Backup JSON - Pariwana Scheduler{% endblock %}
+{% block content %}
+  <div class="grid-2">
+    <section class="panel">
+      <h3 style="margin-top: 0;">Descargar backup</h3>
+      <p class="muted">Genera un respaldo JSON de la sede seleccionada.</p>
+      <a href="/app/backup/download/" class="primary" style="display:inline-block; text-decoration:none; padding:8px 12px; border-radius:6px; background:#0f766e; color:#fff;">Descargar backup JSON</a>
+    </section>
+
+    <section class="panel">
+      <h3 style="margin-top: 0;">Restaurar backup</h3>
+      <p class="muted">La restauracion aplica modo merge (crea/actualiza, no elimina).</p>
+      <form method="post" enctype="multipart/form-data" class="stack">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="preview_restore">
+        <div>
+          <label>Archivo JSON</label>
+          <input type="file" name="file" accept=".json,application/json" required>
+        </div>
+        <label style="display:flex; gap:8px; align-items:center; margin:0;">
+          <input type="checkbox" name="sync_mode" value="1">
+          Modo sync (desactiva trabajadores/turnos/estados no presentes en el backup)
+        </label>
+        <button class="primary" type="submit">Vista previa restauracion</button>
+      </form>
+    </section>
+  </div>
+
+  {% if preview_summary %}
+    <section class="panel" style="margin-top: 12px;">
+      <h3 style="margin-top: 0;">Vista previa de restauracion</h3>
+      <p class="muted">Archivo: {{ source_name }}</p>
+      <div class="grid-2">
+        <div>
+          <h4 style="margin: 0 0 6px;">Crear</h4>
+          <pre style="white-space:pre-wrap; margin:0; font-size:12px;">{{ preview_summary.created }}</pre>
+        </div>
+        <div>
+          <h4 style="margin: 0 0 6px;">Actualizar</h4>
+          <pre style="white-space:pre-wrap; margin:0; font-size:12px;">{{ preview_summary.updated }}</pre>
+        </div>
+      </div>
+      <div style="margin-top: 10px;">
+        <h4 style="margin: 0 0 6px;">Omitir</h4>
+        <pre style="white-space:pre-wrap; margin:0; font-size:12px;">{{ preview_summary.skipped }}</pre>
+      </div>
+      <div style="margin-top: 10px;">
+        <h4 style="margin: 0 0 6px;">Desactivar (solo sync)</h4>
+        <pre style="white-space:pre-wrap; margin:0; font-size:12px;">{{ preview_summary.deactivated }}</pre>
+      </div>
+
+      <form method="post" style="margin-top: 12px;">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="apply_restore">
+        <input type="hidden" name="source_name" value="{{ source_name }}">
+        <input type="hidden" name="sync_mode" value="{% if preview_sync_mode %}1{% else %}0{% endif %}">
+        <textarea name="payload_json" style="display:none;">{{ payload_json }}</textarea>
+        <button class="primary" type="submit">Aplicar restauracion</button>
+      </form>
+    </section>
+  {% endif %}
+{% endblock %}

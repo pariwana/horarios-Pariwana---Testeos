@@ -1,0 +1,210 @@
+{% extends "webui/base.html" %}
+{% block title %}Turnos - Pariwana Scheduler{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1>Turnos</h1>
+      <p class="compact-note">Turnos activos disponibles para asignacion y carga BUK.</p>
+    </div>
+    {% if can_manage_shifts %}
+      <div class="page-actions">
+        <a class="button" href="/app/imports/">Importar XLSX</a>
+        <a class="button" href="/app/imports/shifts-template/">Descargar plantilla</a>
+        <button class="primary" type="button" data-open-modal="shift-create-modal">+ Nuevo turno</button>
+      </div>
+    {% endif %}
+  </div>
+
+  <section class="panel" style="margin-bottom: 12px;">
+    <form method="get" class="filters-bar">
+      <div>
+        <label>Estado</label>
+        <select name="status">
+          <option value="active" {% if status_filter == "active" %}selected{% endif %}>Activos</option>
+          <option value="inactive" {% if status_filter == "inactive" %}selected{% endif %}>Inactivos</option>
+          <option value="all" {% if status_filter == "all" %}selected{% endif %}>Todos</option>
+        </select>
+      </div>
+      <button type="submit">Aplicar filtro</button>
+    </form>
+    {% if can_manage_shifts %}
+      <details style="margin-top: 10px;">
+        <summary style="cursor:pointer; font-weight:700;">Herramientas avanzadas</summary>
+        <p class="compact-note">Usa Turnos AUTO solo para limpiar turnos temporales detectados en importaciones.</p>
+        <a class="button" href="/app/shifts-auto/">Abrir Turnos AUTO</a>
+      </details>
+    {% endif %}
+  </section>
+
+  <section class="panel ops-list">
+    <h3 style="margin-top: 0;">Turnos existentes</h3>
+    {% if shifts %}
+      <table class="ops-table desktop-table">
+        <thead>
+          <tr>
+            <th>Turno</th>
+            <th>Area</th>
+            <th>Horario</th>
+            <th>Codigo BUK</th>
+            <th>Estado</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for shift in shifts %}
+            <tr>
+              <td>
+                <div class="row-title">{{ shift.name }}</div>
+                {% if shift.is_night_shift %}<div class="row-subtitle">Turno nocturno</div>{% endif %}
+              </td>
+              <td>{{ shift.area.name }}</td>
+              <td>{{ shift.start_time|time:"H:i" }}-{{ shift.end_time|time:"H:i" }}</td>
+              <td>{{ shift.buk_code }}</td>
+              <td>{% if shift.active %}<span class="badge badge-ok">Activo</span>{% else %}<span class="badge badge-muted">Inactivo</span>{% endif %}</td>
+              <td>
+                {% if can_manage_shifts %}
+                  <span class="icon-actions">
+                    <button class="icon-button" type="button" data-open-modal="shift-edit-modal-{{ shift.id }}" title="Editar turno">&#9998;</button>
+                    {% if shift.active %}
+                      <button class="icon-button danger" type="button" data-open-modal="shift-delete-modal-{{ shift.id }}" title="Desactivar turno">&#10005;</button>
+                    {% endif %}
+                  </span>
+                {% else %}
+                  <span class="muted">Solo lectura</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <div class="mobile-cards">
+        {% for shift in shifts %}
+          <article class="mobile-card">
+            <div class="mobile-card-header">
+              <div>
+                <div class="row-title">{{ shift.start_time|time:"H:i" }}-{{ shift.end_time|time:"H:i" }} ({{ shift.name }})</div>
+                <div class="row-subtitle">{{ shift.area.name }}</div>
+              </div>
+              {% if shift.active %}<span class="badge badge-ok">Activo</span>{% else %}<span class="badge badge-muted">Inactivo</span>{% endif %}
+            </div>
+            <div class="mobile-card-meta">
+              <span class="badge">{{ shift.buk_code }}</span>
+              {% if shift.is_night_shift %}<span class="badge">Nocturno</span>{% endif %}
+            </div>
+            {% if can_manage_shifts %}
+              <div class="icon-actions">
+                <button class="icon-button" type="button" data-open-modal="shift-edit-modal-{{ shift.id }}" title="Editar turno">&#9998;</button>
+                {% if shift.active %}
+                  <button class="icon-button danger" type="button" data-open-modal="shift-delete-modal-{{ shift.id }}" title="Desactivar turno">&#10005;</button>
+                {% endif %}
+              </div>
+            {% endif %}
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="muted">No hay turnos para el filtro seleccionado.</p>
+    {% endif %}
+  </section>
+
+  {% if can_manage_shifts %}
+    <dialog class="modal-dialog" id="shift-create-modal">
+      <div class="modal-header">
+        <h3>Nuevo turno</h3>
+        <button class="modal-close" type="button" data-close-modal>&times;</button>
+      </div>
+      <div class="modal-body">
+        <form method="post" class="stack">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="create_shift">
+          {% for field in form %}
+            <div>
+              <label>{{ field.label }}</label>
+              {{ field }}
+              {% if field.errors %}<div class="error">{{ field.errors|join:", " }}</div>{% endif %}
+            </div>
+          {% endfor %}
+          <div class="modal-actions">
+            <button type="button" data-close-modal>Cancelar</button>
+            <button class="primary" type="submit">Guardar turno</button>
+          </div>
+        </form>
+      </div>
+    </dialog>
+
+    {% for shift in shifts %}
+      <dialog class="modal-dialog" id="shift-edit-modal-{{ shift.id }}">
+        <div class="modal-header">
+          <h3>Editar turno</h3>
+          <button class="modal-close" type="button" data-close-modal>&times;</button>
+        </div>
+        <div class="modal-body">
+          <form method="post" class="stack">
+            {% csrf_token %}
+            <input type="hidden" name="shift_id" value="{{ shift.id }}">
+            <input type="hidden" name="action" value="update_shift">
+            <div>
+              <label>Area</label>
+              <select name="area" required>
+                {% for area in area_options %}
+                  <option value="{{ area.id }}" {% if shift.area_id == area.id %}selected{% endif %}>{{ area.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="form-grid">
+              <div>
+                <label>Nombre</label>
+                <input type="text" name="name" value="{{ shift.name }}" required>
+              </div>
+              <div>
+                <label>Codigo BUK</label>
+                <input type="text" name="buk_code" value="{{ shift.buk_code }}" required>
+              </div>
+              <div>
+                <label>Inicio</label>
+                <input type="time" name="start_time" value="{{ shift.start_time|time:'H:i' }}" required>
+              </div>
+              <div>
+                <label>Fin</label>
+                <input type="time" name="end_time" value="{{ shift.end_time|time:'H:i' }}" required>
+              </div>
+              <div>
+                <label>Break inicio</label>
+                <input type="time" name="break_start" value="{{ shift.break_start|time:'H:i' }}">
+              </div>
+              <div>
+                <label>Break fin</label>
+                <input type="time" name="break_end" value="{{ shift.break_end|time:'H:i' }}">
+              </div>
+            </div>
+            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="is_night_shift" {% if shift.is_night_shift %}checked{% endif %}> Nocturno</label>
+            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="active" {% if shift.active %}checked{% endif %}> Activo</label>
+            <div class="modal-actions">
+              <button type="button" data-close-modal>Cancelar</button>
+              <button class="primary" type="submit">Guardar cambios</button>
+            </div>
+          </form>
+        </div>
+      </dialog>
+
+      <dialog class="modal-dialog modal-danger" id="shift-delete-modal-{{ shift.id }}">
+        <div class="modal-header">
+          <h3>Desactivar turno</h3>
+          <button class="modal-close" type="button" data-close-modal>&times;</button>
+        </div>
+        <div class="modal-body">
+          <p>El turno <strong>{{ shift.start_time|time:"H:i" }}-{{ shift.end_time|time:"H:i" }} ({{ shift.name }})</strong> se conservara en asignaciones pasadas, pero no aparecera para nuevas asignaciones.</p>
+          <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="shift_id" value="{{ shift.id }}">
+            <div class="modal-actions">
+              <button type="button" data-close-modal>Cancelar</button>
+              <button class="icon-button danger" style="width:auto; padding:8px 12px;" type="submit" name="action" value="deactivate_shift">Desactivar</button>
+            </div>
+          </form>
+        </div>
+      </dialog>
+    {% endfor %}
+  {% endif %}
+{% endblock %}

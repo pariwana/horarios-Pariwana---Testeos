@@ -1,13 +1,104 @@
 import csv
+from collections import defaultdict
 from datetime import date, datetime, time
 from io import BytesIO, StringIO
+import unicodedata
 
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
 from apps.audit.services import AuditService
 from apps.imports.models import ImportBatch, ImportPreviewRow
 from apps.scheduling.models import ScheduleAssignment
 from apps.workers.models import Area, Shift, SpecialState, Worker
+
+
+class ImportSampleService:
+    WORKERS_HEADERS = ["DNI", "Nombre", "Apellido", "Area", "Sede"]
+    SHIFTS_HEADERS = [
+        "Area",
+        "Turno",
+        "Codigo BUK",
+        "Hora Inicio",
+        "Hora Fin",
+        "Inicio Break",
+        "Fin Break",
+        "Nocturno",
+        "Activo",
+        "Sede",
+    ]
+
+    @staticmethod
+    def _yes_no(value):
+        return "1" if value else "0"
+
+    @staticmethod
+    def _fmt_time(value):
+        return value.strftime("%H:%M") if value else ""
+
+    @staticmethod
+    def build_sample_payload(*, tenant, property_obj, max_workers=12, max_shifts=20):
+        workers = list(
+            Worker.objects.filter(tenant=tenant, property=property_obj, active=True)
+            .select_related("area")
+            .order_by("last_name", "first_name")[: max(1, int(max_workers))]
+        )
+        shifts = list(
+            Shift.objects.filter(tenant=tenant, property=property_obj, active=True)
+            .select_related("area")
+            .order_by("area__name", "name")[: max(1, int(max_shifts))]
+        )
+
+        workers_rows = [
+            [
+                worker.document_number,
+                worker.first_name,
+                worker.last_name,
+                worker.area.name if worker.area_id else "",
+                property_obj.name,
+            ]
+            for worker in workers
+        ]
+        shifts_rows = [
+            [
+                shift.area.name if shift.area_id else "",
+                shift.name,
+                shift.buk_code,
+                ImportSampleService._fmt_time(shift.start_time),
+                ImportSampleService._fmt_time(shift.end_time),
+                ImportSampleService._fmt_time(shift.break_start),
+                ImportSampleService._fmt_time(shift.break_end),
+                ImportSampleService._yes_no(shift.is_night_shift),
+                ImportSampleService._yes_no(shift.active),
+                property_obj.name,
+            ]
+            for shift in shifts
+        ]
+        return {
+            "workers_headers": list(ImportSampleService.WORKERS_HEADERS),
+            "workers_rows": workers_rows,
+            "shifts_headers": list(ImportSampleService.SHIFTS_HEADERS),
+            "shifts_rows": shifts_rows,
+        }
+
+    @staticmethod
+    def generate_csv_bytes(*, headers, rows):
+        output = StringIO()
+        writer = csv.writer(output)
+        writer.writerow(headers)
+        writer.writerows(rows)
+        return output.getvalue().encode("utf-8-sig")
+
+    @staticmethod
+    def generate_xlsx_bytes(*, sheet_name, headers, rows):
+        wb = Workbook()
+        ws = wb.active
+        ws.title = sheet_name
+        ws.append(headers)
+        for row in rows:
+            ws.append(row)
+        out = BytesIO()
+        wb.save(out)
+        return out.getvalue()
 
 
 class ExcelImportService:
@@ -46,11 +137,18 @@ class ExcelImportService:
 
     @staticmethod
     def _parse_time_range(value):
-        text = ExcelImportService._normalize_text(value)
+        text = ExcelImportService._normalize_text(value).replace("–", "-")
         if "-" not in text:
             return None, None
         left, right = text.split("-", 1)
         return ExcelImportService._parse_time(left), ExcelImportService._parse_time(right)
+
+    @staticmethod
+    def _normalize_schedule_key(value):
+        start_time, end_time = ExcelImportService._parse_time_range(value)
+        if start_time and end_time:
+            return f"{start_time.strftime('%H:%M')}-{end_time.strftime('%H:%M')}"
+        return ExcelImportService._normalize_text(value).replace(" ", "").lower()
 
     @staticmethod
     def _serialize_time(value):
@@ -219,6 +317,10 @@ class ExcelImportService:
         # Shift registry.
         shift_sheet_name = next((name for name in workbook_values.sheetnames if name.startswith("Reg. Horarios x")), None)
         shift_by_area_schedule = {}
+        shift_by_area_schedule_norm = {}
+        shift_by_area_code = {}
+        shift_by_area_name = {}
+        shift_names_by_area = defaultdict(set)
         if shift_sheet_name:
             ws = workbook_values[shift_sheet_name]
             for row_num in range(4, ws.max_row + 1):
@@ -244,7 +346,13 @@ class ExcelImportService:
 
                 start_time, end_time = ExcelImportService._parse_time_range(schedule_text)
                 break_start, break_end = ExcelImportService._parse_time_range(break_text)
-                shift_by_area_schedule[(area_name.lower(), schedule_text.lower())] = shift_name
+                area_key = area_name.lower()
+                shift_by_area_schedule[(area_key, schedule_text.lower())] = shift_name
+                shift_by_area_schedule_norm[(area_key, ExcelImportService._normalize_schedule_key(schedule_text))] = shift_name
+                if buk_code:
+                    shift_by_area_code[(area_key, buk_code.upper())] = shift_name
+                shift_by_area_name[(area_key, shift_name.lower())] = shift_name
+                shift_names_by_area[area_key].add(shift_name)
 
                 ImportPreviewRow.objects.create(
                     batch=batch,
@@ -310,11 +418,22 @@ class ExcelImportService:
                     if assignment_value.upper() in {"OFF", "VACACIONES", "LICENCIA"}:
                         payload["special_state_name"] = assignment_value.upper()
                     else:
+                        area_key = current_area.lower()
+                        assignment_key_raw = assignment_value.lower()
+                        assignment_key_norm = ExcelImportService._normalize_schedule_key(assignment_value)
                         payload["area_name"] = current_area
                         payload["schedule_text"] = assignment_value
                         payload["shift_name"] = shift_by_area_schedule.get(
-                            (current_area.lower(), assignment_value.lower())
+                            (area_key, assignment_key_raw)
                         )
+                        if payload["shift_name"] is None:
+                            payload["shift_name"] = shift_by_area_schedule_norm.get((area_key, assignment_key_norm))
+                        if payload["shift_name"] is None:
+                            payload["shift_name"] = shift_by_area_code.get((area_key, assignment_value.upper()))
+                        if payload["shift_name"] is None:
+                            payload["shift_name"] = shift_by_area_name.get((area_key, assignment_value.lower()))
+                        if payload["shift_name"] is None and len(shift_names_by_area.get(area_key, set())) == 1:
+                            payload["shift_name"] = next(iter(shift_names_by_area[area_key]))
                         if payload["shift_name"] is None:
                             status = "warning"
                             batch.summary["warnings"] += 1
@@ -574,12 +693,400 @@ class WorkerImportService:
         return batch
 
 
+class ShiftAreaImportService:
+    REQUIRED_COLUMNS = {"area", "turno", "buk_code", "start_time", "end_time"}
+
+    @staticmethod
+    def _normalize_header(header):
+        text = str(header or "").strip().lower()
+        mapping = {
+            "area": "area",
+            "area_name": "area",
+            "turno": "turno",
+            "nombre turno": "turno",
+            "nombre_turno": "turno",
+            "shift": "turno",
+            "name": "turno",
+            "codigo": "buk_code",
+            "codigo buk": "buk_code",
+            "codigo_buk": "buk_code",
+            "buk_code": "buk_code",
+            "code": "buk_code",
+            "hora inicio": "start_time",
+            "hora_inicio": "start_time",
+            "inicio": "start_time",
+            "start_time": "start_time",
+            "hora fin": "end_time",
+            "hora_fin": "end_time",
+            "fin": "end_time",
+            "end_time": "end_time",
+            "inicio break": "break_start",
+            "break inicio": "break_start",
+            "break_start": "break_start",
+            "fin break": "break_end",
+            "break fin": "break_end",
+            "break_end": "break_end",
+            "nocturno": "is_night_shift",
+            "turno nocturno": "is_night_shift",
+            "is_night_shift": "is_night_shift",
+            "activo": "active",
+            "active": "active",
+            "sede": "sede",
+        }
+        return mapping.get(text, text)
+
+    @staticmethod
+    def _read_rows(file_name, file_bytes):
+        lower = file_name.lower()
+        if lower.endswith(".csv"):
+            text = file_bytes.decode("utf-8-sig")
+            reader = csv.DictReader(StringIO(text))
+            headers = [ShiftAreaImportService._normalize_header(h) for h in (reader.fieldnames or [])]
+            rows = []
+            for raw_row in reader:
+                row = {}
+                for key, value in raw_row.items():
+                    row[ShiftAreaImportService._normalize_header(key)] = value
+                rows.append(row)
+            return headers, rows
+
+        wb = load_workbook(BytesIO(file_bytes), data_only=True)
+        ws = wb.active
+        raw_headers = [ws.cell(1, i).value for i in range(1, ws.max_column + 1)]
+        headers = [ShiftAreaImportService._normalize_header(h) for h in raw_headers]
+        rows = []
+        for row_num in range(2, ws.max_row + 1):
+            payload = {}
+            has_any_value = False
+            for col_num, key in enumerate(headers, start=1):
+                value = ws.cell(row_num, col_num).value
+                payload[key] = value
+                if value not in (None, ""):
+                    has_any_value = True
+            if has_any_value:
+                rows.append(payload)
+        return headers, rows
+
+    @staticmethod
+    def _parse_bool(value, default=False):
+        if value in (None, ""):
+            return default
+        if isinstance(value, bool):
+            return value
+        text = str(value).strip().lower()
+        return text in {"1", "true", "si", "yes", "y", "x"}
+
+    @staticmethod
+    def create_shift_preview(
+        *,
+        tenant,
+        fallback_property,
+        file_name,
+        file_bytes,
+        user,
+        create_missing_areas=False,
+    ):
+        headers, rows = ShiftAreaImportService._read_rows(file_name, file_bytes)
+        missing = ShiftAreaImportService.REQUIRED_COLUMNS - set(headers)
+        if missing:
+            raise ValueError(f"Missing required columns: {', '.join(sorted(missing))}")
+
+        batch = ImportBatch.objects.create(
+            tenant=tenant,
+            property=fallback_property,
+            source_type="shifts_area",
+            file_name=file_name,
+            created_by=user,
+            summary={},
+        )
+
+        properties_by_name = {prop.name.strip().lower(): prop for prop in tenant.properties.all()}
+        multiple_properties = len(properties_by_name) > 1
+        summary = {
+            "detected_rows": len(rows),
+            "created": 0,
+            "updated": 0,
+            "skipped": 0,
+            "errors": 0,
+            "new_areas": 0,
+            "unknown_properties": 0,
+        }
+
+        for row_index, row in enumerate(rows, start=2):
+            area_name = str(row.get("area") or "").strip()
+            shift_name = str(row.get("turno") or "").strip()
+            buk_code = str(row.get("buk_code") or "").strip()
+            property_name = str(row.get("sede") or "").strip()
+            start_time = ExcelImportService._parse_time(row.get("start_time"))
+            end_time = ExcelImportService._parse_time(row.get("end_time"))
+            break_start = ExcelImportService._parse_time(row.get("break_start"))
+            break_end = ExcelImportService._parse_time(row.get("break_end"))
+            night_flag_raw = row.get("is_night_shift")
+            active_raw = row.get("active")
+
+            status = "ok"
+            action = "skip"
+            message = ""
+            property_obj = fallback_property
+
+            if not area_name or not shift_name or not buk_code or not start_time or not end_time:
+                status = "error"
+                message = "area, turno, buk_code, start_time y end_time son obligatorios"
+
+            if status == "ok" and multiple_properties and not property_name:
+                status = "error"
+                message = "sede is required when file has mixed properties"
+
+            if status == "ok" and property_name:
+                property_obj = properties_by_name.get(property_name.lower())
+                if property_obj is None:
+                    status = "error"
+                    message = f"unknown property: {property_name}"
+                    summary["unknown_properties"] += 1
+
+            if status == "ok":
+                area_obj = Area.objects.filter(
+                    tenant=tenant,
+                    property=property_obj,
+                    name__iexact=area_name,
+                ).first()
+                if area_obj is None and not create_missing_areas:
+                    status = "error"
+                    message = f"area does not exist: {area_name}"
+                elif area_obj is None:
+                    action = "create_area"
+                    summary["new_areas"] += 1
+
+            if status == "ok":
+                existing = Shift.objects.filter(
+                    tenant=tenant,
+                    property=property_obj,
+                    buk_code__iexact=buk_code,
+                ).first()
+                if existing is None:
+                    existing = Shift.objects.filter(
+                        tenant=tenant,
+                        property=property_obj,
+                        area__name__iexact=area_name,
+                        name__iexact=shift_name,
+                    ).first()
+                action = "update" if existing else "create"
+                if existing:
+                    summary["updated"] += 1
+                else:
+                    summary["created"] += 1
+            else:
+                summary["errors"] += 1
+
+            ImportPreviewRow.objects.create(
+                batch=batch,
+                sheet_name="shifts_import",
+                row_number=row_index,
+                action=action,
+                status=status,
+                message=message,
+                payload={
+                    "area_name": area_name,
+                    "shift_name": shift_name,
+                    "buk_code": buk_code,
+                    "property_name": property_name,
+                    "property_id": property_obj.id if property_obj else None,
+                    "start_time": ExcelImportService._serialize_time(start_time),
+                    "end_time": ExcelImportService._serialize_time(end_time),
+                    "break_start": ExcelImportService._serialize_time(break_start),
+                    "break_end": ExcelImportService._serialize_time(break_end),
+                    "is_night_shift": ShiftAreaImportService._parse_bool(night_flag_raw, default=None),
+                    "active": ShiftAreaImportService._parse_bool(active_raw, default=True),
+                },
+            )
+
+        batch.summary = summary
+        batch.save(update_fields=["summary", "updated_at"])
+        return batch
+
+    @staticmethod
+    def confirm_shift_import(*, batch):
+        created = 0
+        updated = 0
+        new_areas = 0
+        actor = batch.created_by
+        rows = batch.preview_rows.filter(status="ok").order_by("row_number")
+        for row in rows:
+            payload = row.payload
+            property_id = payload.get("property_id")
+            if not property_id:
+                continue
+
+            area, area_created = Area.objects.get_or_create(
+                tenant=batch.tenant,
+                property_id=property_id,
+                name=payload["area_name"],
+                defaults={"type": "", "active": True},
+            )
+            if area_created:
+                new_areas += 1
+
+            start_time = ExcelImportService._parse_time(payload.get("start_time"))
+            end_time = ExcelImportService._parse_time(payload.get("end_time"))
+            break_start = ExcelImportService._parse_time(payload.get("break_start"))
+            break_end = ExcelImportService._parse_time(payload.get("break_end"))
+            if not start_time or not end_time:
+                continue
+
+            is_night_shift = payload.get("is_night_shift")
+            if is_night_shift is None:
+                is_night_shift = end_time <= start_time
+
+            shift = Shift.objects.filter(
+                tenant=batch.tenant,
+                property_id=property_id,
+                buk_code__iexact=payload["buk_code"],
+            ).first()
+            if shift is None:
+                shift = Shift.objects.filter(
+                    tenant=batch.tenant,
+                    property_id=property_id,
+                    area=area,
+                    name__iexact=payload["shift_name"],
+                ).first()
+
+            if shift is None:
+                shift = Shift.objects.create(
+                    tenant=batch.tenant,
+                    property_id=property_id,
+                    area=area,
+                    name=payload["shift_name"],
+                    buk_code=payload["buk_code"],
+                    start_time=start_time,
+                    end_time=end_time,
+                    break_start=break_start,
+                    break_end=break_end,
+                    is_night_shift=bool(is_night_shift),
+                    active=bool(payload.get("active", True)),
+                )
+                created += 1
+                if actor:
+                    AuditService.log(
+                        tenant=batch.tenant,
+                        property_obj=shift.property,
+                        user=actor,
+                        action="shift_create_from_import",
+                        entity_type="Shift",
+                        entity_id=shift.id,
+                        before={},
+                        after={"name": shift.name, "buk_code": shift.buk_code},
+                    )
+                continue
+
+            shift.area = area
+            shift.name = payload["shift_name"]
+            shift.buk_code = payload["buk_code"]
+            shift.start_time = start_time
+            shift.end_time = end_time
+            shift.break_start = break_start
+            shift.break_end = break_end
+            shift.is_night_shift = bool(is_night_shift)
+            shift.active = bool(payload.get("active", True))
+            shift.save()
+            updated += 1
+            if actor:
+                AuditService.log(
+                    tenant=batch.tenant,
+                    property_obj=shift.property,
+                    user=actor,
+                    action="shift_update_from_import",
+                    entity_type="Shift",
+                    entity_id=shift.id,
+                    before={},
+                    after={"name": shift.name, "buk_code": shift.buk_code},
+                )
+
+        batch.summary = {
+            **batch.summary,
+            "applied_created": created,
+            "applied_updated": updated,
+            "applied_new_areas": new_areas,
+        }
+        batch.status = "confirmed"
+        batch.save(update_fields=["summary", "status", "updated_at"])
+        return batch
+
+
 class ExcelImportApplyService:
     @staticmethod
     def _as_date(value):
         if isinstance(value, date):
             return value
         return date.fromisoformat(str(value))
+
+    @staticmethod
+    def _normalize_text_key(value):
+        text = str(value or "").strip().lower()
+        normalized = unicodedata.normalize("NFKD", text)
+        return "".join(ch for ch in normalized if not unicodedata.combining(ch))
+
+    @staticmethod
+    def _resolve_area_for_assignment(*, tenant, property_id, worker, area_name):
+        if area_name:
+            area = Area.objects.filter(
+                tenant=tenant,
+                property_id=property_id,
+                name__iexact=area_name,
+            ).first()
+            if area is not None:
+                return area
+
+            normalized_target = ExcelImportApplyService._normalize_text_key(area_name)
+            for area_obj in Area.objects.filter(tenant=tenant, property_id=property_id):
+                if ExcelImportApplyService._normalize_text_key(area_obj.name) == normalized_target:
+                    return area_obj
+
+        return worker.area
+
+    @staticmethod
+    def _ensure_auto_shift(*, tenant, property_id, area, schedule_text):
+        start_time, end_time = ExcelImportService._parse_time_range(schedule_text)
+        if not start_time or not end_time:
+            return None, False
+
+        existing = Shift.objects.filter(
+            tenant=tenant,
+            property_id=property_id,
+            area=area,
+            start_time=start_time,
+            end_time=end_time,
+        ).first()
+        if existing is not None:
+            return existing, False
+
+        name = f"AUTO_{start_time.strftime('%H%M')}-{end_time.strftime('%H%M')}"
+        base_code = f"AUTO-{area.id}-{start_time.strftime('%H%M')}-{end_time.strftime('%H%M')}"
+        buk_code = base_code
+        suffix = 1
+        while Shift.objects.filter(
+            tenant=tenant,
+            property_id=property_id,
+            buk_code=buk_code,
+        ).exists():
+            suffix += 1
+            buk_code = f"{base_code}-{suffix}"
+
+        shift, created = Shift.objects.get_or_create(
+            tenant=tenant,
+            property_id=property_id,
+            area=area,
+            name=name,
+            defaults={
+                "buk_code": buk_code,
+                "start_time": start_time,
+                "end_time": end_time,
+                "break_start": None,
+                "break_end": None,
+                "is_night_shift": end_time <= start_time,
+                "active": True,
+            },
+        )
+        return shift, created
 
     @staticmethod
     def apply_preview_batch(*, batch):
@@ -706,14 +1213,29 @@ class ExcelImportApplyService:
                         )
                 else:
                     area_name = payload.get("area_name", worker.area.name)
+                    area = ExcelImportApplyService._resolve_area_for_assignment(
+                        tenant=batch.tenant,
+                        property_id=property_id,
+                        worker=worker,
+                        area_name=area_name,
+                    )
                     shift_name = payload.get("shift_name")
                     if shift_name:
                         shift = Shift.objects.filter(
                             tenant=batch.tenant,
                             property_id=property_id,
-                            area__name__iexact=area_name,
+                            area=area,
                             name__iexact=shift_name,
                         ).first()
+                    if not shift:
+                        shift, auto_created = ExcelImportApplyService._ensure_auto_shift(
+                            tenant=batch.tenant,
+                            property_id=property_id,
+                            area=area,
+                            schedule_text=payload.get("schedule_text"),
+                        )
+                        if auto_created:
+                            created["shifts"] += 1
                     if not shift:
                         warnings += 1
                         continue

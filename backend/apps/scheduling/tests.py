@@ -4,8 +4,10 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 from rest_framework.test import APIClient
 
+from apps.audit.models import AuditLog
+from apps.month_closure.models import MonthClosure, MonthClosureStatus
 from apps.modules.models import ModuleActivation
-from apps.scheduling.models import ScheduleAssignment
+from apps.scheduling.models import ScheduleAssignment, SchedulePatternTemplate
 from apps.tenants.models import Property, Tenant, TenantSupportAccessSession
 from apps.users.models import RoleChoices, User, UserAreaPermission, UserPropertyPermission, UserTenantRole
 from apps.workers.models import Area, Shift, SpecialState, Worker
@@ -200,3 +202,591 @@ class SupervisorAreaRestrictionTests(TestCase):
             format="json",
         )
         self.assertEqual(response.status_code, 403)
+
+
+class SchedulingBulkActionsApiTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.tenant = Tenant.objects.create(name="Pariwana Hostels", slug="pariwana-hostels")
+        self.property = Property.objects.create(tenant=self.tenant, name="Pariwana Cusco", slug="pariwana-cusco")
+        self.area = Area.objects.create(tenant=self.tenant, property=self.property, name="Recepcion")
+        self.worker = Worker.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            area=self.area,
+            document_number="10101010",
+            first_name="Ana",
+            last_name="Rojas",
+            active=True,
+        )
+        self.shift = Shift.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            area=self.area,
+            name="Manana",
+            buk_code="REC-M",
+            start_time=time(6, 0),
+            end_time=time(14, 45),
+        )
+        self.state = SpecialState.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            name="OFF",
+            buk_code="OFF",
+        )
+        self.user = User.objects.create_user(email="bulk-api@pariwana.test", password="StrongPass123")
+        UserTenantRole.objects.create(user=self.user, tenant=self.tenant, role=RoleChoices.ADMIN)
+        UserPropertyPermission.objects.create(
+            user=self.user,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+            can_schedule=True,
+        )
+        ModuleActivation.objects.create(tenant=self.tenant, module_key="scheduling", is_enabled=True)
+        self.client.force_authenticate(user=self.user)
+
+    def test_bulk_range_state_creates_assignments_and_audit(self):
+        response = self.client.post(
+            "/api/assignments/bulk-range-state/",
+            {
+                "tenant_id": self.tenant.id,
+                "property_id": self.property.id,
+                "date_from": "2026-06-10",
+                "date_to": "2026-06-12",
+                "special_state_id": self.state.id,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, msg=response.content)
+        self.assertEqual(response.json()["applied"], 3)
+        self.assertEqual(
+            ScheduleAssignment.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                worker=self.worker,
+                special_state=self.state,
+                date__gte="2026-06-10",
+                date__lte="2026-06-12",
+            ).count(),
+            3,
+        )
+        self.assertTrue(
+            AuditLog.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                user=self.user,
+                action="scheduling_bulk_range_state_apply",
+            ).exists()
+        )
+
+    def test_bulk_sundays_state_creates_assignments(self):
+        response = self.client.post(
+            "/api/assignments/bulk-sundays-state/",
+            {
+                "tenant_id": self.tenant.id,
+                "property_id": self.property.id,
+                "year": 2026,
+                "month": 6,
+                "special_state_id": self.state.id,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, msg=response.content)
+        self.assertEqual(response.json()["sundays"], 4)
+        self.assertEqual(response.json()["applied"], 4)
+        self.assertEqual(
+            ScheduleAssignment.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                worker=self.worker,
+                special_state=self.state,
+            ).count(),
+            4,
+        )
+
+    def test_bulk_sundays_state_dry_run_returns_impact_without_writes(self):
+        response = self.client.post(
+            "/api/assignments/bulk-sundays-state/",
+            {
+                "tenant_id": self.tenant.id,
+                "property_id": self.property.id,
+                "year": 2026,
+                "month": 6,
+                "special_state_id": self.state.id,
+                "dry_run": True,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, msg=response.content)
+        payload = response.json()
+        self.assertTrue(payload["dry_run"])
+        self.assertEqual(payload["sundays"], 4)
+        self.assertEqual(payload["applied"], 4)
+        self.assertEqual(payload["impact"]["total"], 4)
+        self.assertEqual(payload["impact"]["to_create"], 4)
+        self.assertEqual(payload["impact"]["to_update"], 0)
+        self.assertEqual(payload["impact"]["unchanged"], 0)
+        self.assertEqual(ScheduleAssignment.objects.count(), 0)
+
+    def test_copy_week_copies_assignments(self):
+        ScheduleAssignment.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            worker=self.worker,
+            date="2026-06-01",
+            shift=self.shift,
+        )
+        ScheduleAssignment.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            worker=self.worker,
+            date="2026-06-03",
+            special_state=self.state,
+        )
+        response = self.client.post(
+            "/api/assignments/copy-week/",
+            {
+                "tenant_id": self.tenant.id,
+                "property_id": self.property.id,
+                "source_week_start": "2026-06-01",
+                "target_week_start": "2026-06-08",
+                "copy_kind": "all",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, msg=response.content)
+        self.assertEqual(response.json()["copied"], 2)
+        self.assertTrue(
+            ScheduleAssignment.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                worker=self.worker,
+                date="2026-06-08",
+                shift=self.shift,
+            ).exists()
+        )
+        self.assertTrue(
+            ScheduleAssignment.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                worker=self.worker,
+                date="2026-06-10",
+                special_state=self.state,
+            ).exists()
+        )
+
+    def test_copy_previous_month_copies_assignments(self):
+        ScheduleAssignment.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            worker=self.worker,
+            date="2026-05-05",
+            shift=self.shift,
+        )
+        response = self.client.post(
+            "/api/assignments/copy-previous-month/",
+            {
+                "tenant_id": self.tenant.id,
+                "property_id": self.property.id,
+                "target_year": 2026,
+                "target_month": 6,
+                "copy_kind": "all",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, msg=response.content)
+        self.assertEqual(response.json()["copied"], 1)
+        self.assertTrue(
+            ScheduleAssignment.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                worker=self.worker,
+                date="2026-06-05",
+                shift=self.shift,
+            ).exists()
+        )
+
+    def test_bulk_range_state_blocked_when_month_closed(self):
+        MonthClosure.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            year=2026,
+            month=6,
+            status=MonthClosureStatus.CLOSED,
+        )
+        response = self.client.post(
+            "/api/assignments/bulk-range-state/",
+            {
+                "tenant_id": self.tenant.id,
+                "property_id": self.property.id,
+                "date_from": "2026-06-10",
+                "date_to": "2026-06-12",
+                "special_state_id": self.state.id,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400, msg=response.content)
+        self.assertFalse(
+            ScheduleAssignment.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                date__gte="2026-06-10",
+                date__lte="2026-06-12",
+            ).exists()
+        )
+
+    def test_bulk_range_state_dry_run_returns_impact_without_writes(self):
+        response = self.client.post(
+            "/api/assignments/bulk-range-state/",
+            {
+                "tenant_id": self.tenant.id,
+                "property_id": self.property.id,
+                "date_from": "2026-06-10",
+                "date_to": "2026-06-12",
+                "special_state_id": self.state.id,
+                "dry_run": True,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, msg=response.content)
+        payload = response.json()
+        self.assertTrue(payload["dry_run"])
+        self.assertEqual(payload["impact"]["total"], 3)
+        self.assertEqual(payload["impact"]["to_create"], 3)
+        self.assertEqual(payload["impact"]["to_update"], 0)
+        self.assertEqual(payload["impact"]["unchanged"], 0)
+        self.assertEqual(ScheduleAssignment.objects.count(), 0)
+        self.assertFalse(
+            AuditLog.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                user=self.user,
+                action="scheduling_bulk_range_state_apply",
+            ).exists()
+        )
+
+    def test_bulk_week_pattern_applies_shift_and_state(self):
+        response = self.client.post(
+            "/api/assignments/bulk-week-pattern/",
+            {
+                "tenant_id": self.tenant.id,
+                "property_id": self.property.id,
+                "date_from": "2026-06-01",
+                "date_to": "2026-06-07",
+                "monday_value": f"shift:{self.shift.id}",
+                "sunday_value": f"state:{self.state.id}",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, msg=response.content)
+        self.assertEqual(response.json()["applied"], 2)
+        self.assertTrue(
+            ScheduleAssignment.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                worker=self.worker,
+                date="2026-06-01",
+                shift=self.shift,
+            ).exists()
+        )
+        self.assertTrue(
+            ScheduleAssignment.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                worker=self.worker,
+                date="2026-06-07",
+                special_state=self.state,
+            ).exists()
+        )
+        self.assertTrue(
+            AuditLog.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                user=self.user,
+                action="scheduling_bulk_week_pattern_apply",
+            ).exists()
+        )
+
+    def test_bulk_week_pattern_blocked_when_month_closed(self):
+        MonthClosure.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            year=2026,
+            month=6,
+            status=MonthClosureStatus.CLOSED,
+        )
+        response = self.client.post(
+            "/api/assignments/bulk-week-pattern/",
+            {
+                "tenant_id": self.tenant.id,
+                "property_id": self.property.id,
+                "date_from": "2026-06-01",
+                "date_to": "2026-06-07",
+                "monday_value": f"shift:{self.shift.id}",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400, msg=response.content)
+
+    def test_bulk_week_pattern_dry_run_returns_impact_without_writes(self):
+        response = self.client.post(
+            "/api/assignments/bulk-week-pattern/",
+            {
+                "tenant_id": self.tenant.id,
+                "property_id": self.property.id,
+                "date_from": "2026-06-01",
+                "date_to": "2026-06-07",
+                "monday_value": f"shift:{self.shift.id}",
+                "sunday_value": f"state:{self.state.id}",
+                "dry_run": True,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, msg=response.content)
+        payload = response.json()
+        self.assertTrue(payload["dry_run"])
+        self.assertEqual(payload["applied"], 2)
+        self.assertEqual(payload["impact"]["total"], 2)
+        self.assertEqual(payload["impact"]["to_create"], 2)
+        self.assertEqual(payload["impact"]["to_update"], 0)
+        self.assertEqual(payload["impact"]["unchanged"], 0)
+        self.assertEqual(ScheduleAssignment.objects.count(), 0)
+
+    def test_copy_week_dry_run_returns_impact_without_writes(self):
+        ScheduleAssignment.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            worker=self.worker,
+            date="2026-06-01",
+            shift=self.shift,
+        )
+        response = self.client.post(
+            "/api/assignments/copy-week/",
+            {
+                "tenant_id": self.tenant.id,
+                "property_id": self.property.id,
+                "source_week_start": "2026-06-01",
+                "target_week_start": "2026-06-08",
+                "copy_kind": "all",
+                "dry_run": True,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, msg=response.content)
+        payload = response.json()
+        self.assertTrue(payload["dry_run"])
+        self.assertEqual(payload["copied"], 1)
+        self.assertEqual(payload["impact"]["total"], 1)
+        self.assertEqual(payload["impact"]["to_create"], 1)
+        self.assertEqual(payload["impact"]["to_update"], 0)
+        self.assertEqual(payload["impact"]["unchanged"], 0)
+        self.assertEqual(
+            ScheduleAssignment.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                date="2026-06-08",
+            ).count(),
+            0,
+        )
+
+
+class SchedulingPatternTemplateApiTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.tenant = Tenant.objects.create(name="Pariwana Hostels", slug="pariwana-hostels")
+        self.property = Property.objects.create(tenant=self.tenant, name="Pariwana Cusco", slug="pariwana-cusco")
+        self.area = Area.objects.create(tenant=self.tenant, property=self.property, name="Recepcion")
+        self.worker = Worker.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            area=self.area,
+            document_number="20202020",
+            first_name="Luis",
+            last_name="Perez",
+            active=True,
+        )
+        self.shift = Shift.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            area=self.area,
+            name="Manana",
+            buk_code="REC-M",
+            start_time=time(6, 0),
+            end_time=time(14, 45),
+        )
+        self.state = SpecialState.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            name="OFF",
+            buk_code="OFF",
+        )
+        self.user = User.objects.create_user(email="pattern-api@pariwana.test", password="StrongPass123")
+        UserTenantRole.objects.create(user=self.user, tenant=self.tenant, role=RoleChoices.ADMIN)
+        UserPropertyPermission.objects.create(
+            user=self.user,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+            can_schedule=True,
+        )
+        ModuleActivation.objects.create(tenant=self.tenant, module_key="scheduling", is_enabled=True)
+        self.client.force_authenticate(user=self.user)
+
+    def test_save_week_pattern_template_creates_template(self):
+        response = self.client.post(
+            "/api/assignments/save-week-pattern-template/",
+            {
+                "tenant_id": self.tenant.id,
+                "property_id": self.property.id,
+                "template_name": "OFF domingos + manana",
+                "area_id": self.area.id,
+                "monday_value": f"shift:{self.shift.id}",
+                "sunday_value": f"state:{self.state.id}",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, msg=response.content)
+        payload = response.json()
+        self.assertTrue(payload["created"])
+        template = SchedulePatternTemplate.objects.get(id=payload["id"])
+        self.assertEqual(template.name, "OFF domingos + manana")
+        self.assertEqual(template.area_id, self.area.id)
+        self.assertEqual(template.pattern["monday"], f"shift:{self.shift.id}")
+        self.assertEqual(template.pattern["sunday"], f"state:{self.state.id}")
+        self.assertTrue(
+            AuditLog.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                user=self.user,
+                action="schedule_pattern_template_save",
+                entity_id=str(template.id),
+            ).exists()
+        )
+
+    def test_apply_week_pattern_template_creates_assignments(self):
+        template = SchedulePatternTemplate.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            area=self.area,
+            name="Plantilla 1",
+            pattern={
+                "monday": f"shift:{self.shift.id}",
+                "tuesday": "",
+                "wednesday": "",
+                "thursday": "",
+                "friday": "",
+                "saturday": "",
+                "sunday": f"state:{self.state.id}",
+            },
+            active=True,
+            created_by=self.user,
+            updated_by=self.user,
+        )
+        response = self.client.post(
+            "/api/assignments/apply-week-pattern-template/",
+            {
+                "tenant_id": self.tenant.id,
+                "property_id": self.property.id,
+                "template_id": template.id,
+                "area_id": self.area.id,
+                "date_from": "2026-06-01",
+                "date_to": "2026-06-07",
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, msg=response.content)
+        self.assertEqual(response.json()["applied"], 2)
+        self.assertTrue(
+            ScheduleAssignment.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                worker=self.worker,
+                date="2026-06-01",
+                shift=self.shift,
+            ).exists()
+        )
+        self.assertTrue(
+            ScheduleAssignment.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                worker=self.worker,
+                date="2026-06-07",
+                special_state=self.state,
+            ).exists()
+        )
+        self.assertTrue(
+            AuditLog.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                user=self.user,
+                action="schedule_pattern_template_apply",
+                entity_id=str(template.id),
+            ).exists()
+        )
+
+    def test_apply_week_pattern_template_dry_run_returns_impact_without_writes(self):
+        template = SchedulePatternTemplate.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            area=self.area,
+            name="Plantilla Dry Run",
+            pattern={
+                "monday": f"shift:{self.shift.id}",
+                "tuesday": "",
+                "wednesday": "",
+                "thursday": "",
+                "friday": "",
+                "saturday": "",
+                "sunday": f"state:{self.state.id}",
+            },
+            active=True,
+            created_by=self.user,
+            updated_by=self.user,
+        )
+        response = self.client.post(
+            "/api/assignments/apply-week-pattern-template/",
+            {
+                "tenant_id": self.tenant.id,
+                "property_id": self.property.id,
+                "template_id": template.id,
+                "area_id": self.area.id,
+                "date_from": "2026-06-01",
+                "date_to": "2026-06-07",
+                "dry_run": True,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200, msg=response.content)
+        payload = response.json()
+        self.assertTrue(payload["dry_run"])
+        self.assertEqual(payload["applied"], 2)
+        self.assertEqual(payload["impact"]["total"], 2)
+        self.assertEqual(payload["impact"]["to_create"], 2)
+        self.assertEqual(payload["impact"]["to_update"], 0)
+        self.assertEqual(payload["impact"]["unchanged"], 0)
+        self.assertEqual(ScheduleAssignment.objects.count(), 0)
+        self.assertFalse(
+            AuditLog.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                user=self.user,
+                action="schedule_pattern_template_apply",
+            ).exists()
+        )
+
+    def test_week_pattern_templates_list_returns_saved_templates(self):
+        SchedulePatternTemplate.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            area=self.area,
+            name="Plantilla Lista",
+            pattern={"monday": f"shift:{self.shift.id}", "tuesday": "", "wednesday": "", "thursday": "", "friday": "", "saturday": "", "sunday": ""},
+            active=True,
+        )
+        response = self.client.get(
+            f"/api/assignments/week-pattern-templates/?tenant_id={self.tenant.id}&property_id={self.property.id}"
+        )
+        self.assertEqual(response.status_code, 200, msg=response.content)
+        self.assertEqual(len(response.json()["results"]), 1)
+        self.assertEqual(response.json()["results"][0]["name"], "Plantilla Lista")

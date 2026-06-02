@@ -33,6 +33,7 @@ INSTALLED_APPS = [
     "apps.imports",
     "apps.audit",
     "apps.month_closure",
+    "apps.webui",
 ]
 
 MIDDLEWARE = [
@@ -99,6 +100,9 @@ MEDIA_ROOT = env("MEDIA_ROOT", default=str(BASE_DIR / "media"))
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 AUTH_USER_MODEL = "users.User"
+LOGIN_URL = "/app/login/"
+LOGIN_REDIRECT_URL = "/app/"
+LOGOUT_REDIRECT_URL = "/app/login/"
 
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="noreply@example.com")
 EMAIL_HOST = env("EMAIL_HOST", default="localhost")

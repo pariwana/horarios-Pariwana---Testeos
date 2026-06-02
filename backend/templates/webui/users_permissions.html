@@ -1,0 +1,383 @@
+{% extends "webui/base.html" %}
+{% block title %}Roles y permisos - Pariwana Scheduler{% endblock %}
+{% block content %}
+  <div class="page-header">
+    <div>
+      <h1>Roles y permisos</h1>
+      <p class="compact-note">Gestiona usuarios, roles base y permisos por sede o area.</p>
+    </div>
+    <div class="page-actions">
+      <button class="primary" type="button" data-open-modal="role-create-modal">+ Nuevo Rol</button>
+      <button type="button" data-open-modal="user-create-modal">+ Nuevo usuario</button>
+    </div>
+  </div>
+
+  <section class="panel ops-list" style="margin-bottom: 12px;">
+    <h3 style="margin-top: 0;">Usuarios con permisos</h3>
+    {% if rows %}
+      <table class="ops-table desktop-table">
+        <thead>
+          <tr>
+            <th>Usuario</th>
+            <th>Rol</th>
+            <th>Permisos</th>
+            <th>Areas</th>
+            <th>Estado</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in rows %}
+            <tr>
+              <td>
+                <div class="row-title">{{ row.user.email }}</div>
+                <div class="row-subtitle">{{ row.user.first_name }} {{ row.user.last_name }}</div>
+              </td>
+              <td>{{ row.role|default:"-" }}</td>
+              <td>
+                <div class="mobile-card-meta">
+                  {% if row.permission.can_schedule %}<span class="badge">Horarios</span>{% endif %}
+                  {% if row.permission.can_export_buk %}<span class="badge">BUK</span>{% endif %}
+                  {% if row.permission.can_manage_workers %}<span class="badge">Trabajadores</span>{% endif %}
+                  {% if row.permission.can_manage_shifts %}<span class="badge">Turnos</span>{% endif %}
+                  {% if row.permission.can_manage_users %}<span class="badge">Usuarios</span>{% endif %}
+                </div>
+              </td>
+              <td>
+                {% if row.selected_area_ids %}
+                  {% for area in areas %}
+                    {% if area.id in row.selected_area_ids %}<div>{{ area.name }}</div>{% endif %}
+                  {% endfor %}
+                {% else %}
+                  <span class="muted">Todas</span>
+                {% endif %}
+              </td>
+              <td>{% if row.user.is_active %}<span class="badge badge-ok">Activo</span>{% else %}<span class="badge badge-muted">Inactivo</span>{% endif %}</td>
+              <td>
+                <span class="icon-actions">
+                  <button class="icon-button" type="button" data-open-modal="user-edit-modal-{{ row.user.id }}" title="Editar permisos">&#9998;</button>
+                  {% if row.user.is_active %}
+                    <button class="icon-button danger" type="button" data-open-modal="user-delete-modal-{{ row.user.id }}" title="Desactivar usuario">&#10005;</button>
+                  {% endif %}
+                </span>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <div class="mobile-cards">
+        {% for row in rows %}
+          <article class="mobile-card">
+            <div class="mobile-card-header">
+              <div>
+                <div class="row-title">{{ row.user.email }}</div>
+                <div class="row-subtitle">Rol: {{ row.role|default:"-" }}</div>
+              </div>
+              {% if row.user.is_active %}<span class="badge badge-ok">Activo</span>{% else %}<span class="badge badge-muted">Inactivo</span>{% endif %}
+            </div>
+            <div class="mobile-card-meta">
+              {% if row.permission.can_schedule %}<span class="badge">Horarios</span>{% endif %}
+              {% if row.permission.can_export_buk %}<span class="badge">BUK</span>{% endif %}
+              {% if row.permission.can_manage_workers %}<span class="badge">Trabajadores</span>{% endif %}
+              {% if row.selected_area_ids %}<span class="badge">Areas filtradas</span>{% else %}<span class="badge">Todas las areas</span>{% endif %}
+            </div>
+            <div class="icon-actions">
+              <button class="icon-button" type="button" data-open-modal="user-edit-modal-{{ row.user.id }}" title="Editar permisos">&#9998;</button>
+              {% if row.user.is_active %}
+                <button class="icon-button danger" type="button" data-open-modal="user-delete-modal-{{ row.user.id }}" title="Desactivar usuario">&#10005;</button>
+              {% endif %}
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="muted">No hay usuarios con permisos en esta sede.</p>
+    {% endif %}
+  </section>
+
+  <section class="panel ops-list">
+    <h3 style="margin-top: 0;">Roles configurados</h3>
+    <table class="ops-table">
+      <thead>
+        <tr>
+          <th>Rol</th>
+          <th>Base</th>
+          <th>Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for profile in role_profiles %}
+          <tr>
+            <td>
+              <div class="row-title">{{ profile.name }}</div>
+              {% if profile.is_system %}<div class="row-subtitle">Rol base del sistema</div>{% endif %}
+            </td>
+            <td>{{ profile.base_role }}</td>
+            <td>
+              <span class="icon-actions">
+                <button class="icon-button" type="button" data-open-modal="role-edit-modal-{{ profile.id }}" title="Editar rol">&#9998;</button>
+                {% if not profile.is_system %}
+                  <button class="icon-button danger" type="button" data-open-modal="role-delete-modal-{{ profile.id }}" title="Desactivar rol">&#10005;</button>
+                {% endif %}
+              </span>
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="3" class="muted">No hay roles configurados.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <dialog class="modal-dialog" id="role-create-modal">
+    <div class="modal-header">
+      <h3>Nuevo Rol</h3>
+      <button class="modal-close" type="button" data-close-modal>&times;</button>
+    </div>
+    <div class="modal-body">
+      <form method="post" class="stack">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="create_role_profile">
+        <div class="form-grid">
+          <div>
+            <label>Nombre del rol</label>
+            <input type="text" name="name" placeholder="Supervisor con reportes" required>
+          </div>
+          <div>
+            <label>Codigo</label>
+            <input type="text" name="code" placeholder="supervisor-reportes">
+          </div>
+          <div>
+            <label>Rol base</label>
+            <select name="base_role" required>
+              <option value="admin">Administrador</option>
+              <option value="operator">Operador</option>
+              <option value="supervisor">Supervisor</option>
+            </select>
+          </div>
+          <div>
+            <label>Descripcion</label>
+            <input type="text" name="description">
+          </div>
+        </div>
+        {% include "webui/_permission_checkboxes.html" %}
+        <div class="modal-actions">
+          <button type="button" data-close-modal>Cancelar</button>
+          <button class="primary" type="submit">Crear rol</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <dialog class="modal-dialog" id="user-create-modal">
+    <div class="modal-header">
+      <h3>Nuevo usuario</h3>
+      <button class="modal-close" type="button" data-close-modal>&times;</button>
+    </div>
+    <div class="modal-body">
+      <form method="post" class="stack">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="create_user">
+        <div class="form-grid">
+          <div>
+            <label>Email</label>
+            <input type="email" name="email" required>
+          </div>
+          <div>
+            <label>Contrasena</label>
+            <input type="password" name="password" required>
+          </div>
+          <div>
+            <label>Nombres</label>
+            <input type="text" name="first_name">
+          </div>
+          <div>
+            <label>Apellidos</label>
+            <input type="text" name="last_name">
+          </div>
+        </div>
+        <div>
+          <label>Perfil de rol</label>
+          <select name="role_profile_id">
+            <option value="">Sin perfil</option>
+            {% for profile in role_profiles %}
+              <option value="{{ profile.id }}">{{ profile.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label>Rol en tenant</label>
+          <select name="role" required>
+            <option value="admin">Administrador</option>
+            <option value="operator">Operador</option>
+            <option value="supervisor">Supervisor</option>
+          </select>
+        </div>
+        <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="apply_role_profile_defaults" checked> Aplicar permisos del perfil seleccionado</label>
+        {% include "webui/_permission_checkboxes.html" %}
+        <div>
+          <label>Areas permitidas (opcional)</label>
+          <select name="area_ids" multiple style="min-height: 120px; width: 100%;">
+            {% for area in areas %}
+              <option value="{{ area.id }}">{{ area.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="modal-actions">
+          <button type="button" data-close-modal>Cancelar</button>
+          <button class="primary" type="submit">Guardar usuario</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  {% for row in rows %}
+    <dialog class="modal-dialog" id="user-edit-modal-{{ row.user.id }}">
+      <div class="modal-header">
+        <h3>Editar permisos</h3>
+        <button class="modal-close" type="button" data-close-modal>&times;</button>
+      </div>
+      <div class="modal-body">
+        <form method="post" class="stack">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="update_property_permissions">
+          <input type="hidden" name="user_id" value="{{ row.user.id }}">
+          <div>
+            <label>Usuario</label>
+            <input type="text" value="{{ row.user.email }}" disabled>
+          </div>
+          <div class="form-grid">
+            <div>
+              <label>Perfil de rol</label>
+              <select name="role_profile_id">
+                <option value="">Sin perfil</option>
+                {% for profile in role_profiles %}
+                  <option value="{{ profile.id }}" {% if row.role_profile_id == profile.id %}selected{% endif %}>{{ profile.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div>
+              <label>Rol</label>
+              <select name="role">
+                <option value="admin" {% if row.role == "admin" %}selected{% endif %}>Administrador</option>
+                <option value="operator" {% if row.role == "operator" %}selected{% endif %}>Operador</option>
+                <option value="supervisor" {% if row.role == "supervisor" %}selected{% endif %}>Supervisor</option>
+              </select>
+            </div>
+          </div>
+          <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="apply_role_profile_defaults"> Aplicar permisos del perfil seleccionado</label>
+          <div class="form-grid">
+            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_access" {% if row.permission.can_access %}checked{% endif %}> Acceso sede</label>
+            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_schedule" {% if row.permission.can_schedule %}checked{% endif %}> Programar horarios</label>
+            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_export_buk" {% if row.permission.can_export_buk %}checked{% endif %}> Exportar BUK</label>
+            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_manage_workers" {% if row.permission.can_manage_workers %}checked{% endif %}> Gestionar trabajadores</label>
+            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_manage_shifts" {% if row.permission.can_manage_shifts %}checked{% endif %}> Gestionar turnos</label>
+            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_manage_areas" {% if row.permission.can_manage_areas %}checked{% endif %}> Gestionar areas</label>
+            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_manage_users" {% if row.permission.can_manage_users %}checked{% endif %}> Gestionar usuarios</label>
+            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_view_reports" {% if row.permission.can_view_reports %}checked{% endif %}> Ver reportes</label>
+            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_use_control" {% if row.permission.can_use_control %}checked{% endif %}> Usar control</label>
+          </div>
+          <div>
+            <label>Areas permitidas</label>
+            <select name="area_ids" multiple style="min-height: 100px; width: 100%;">
+              {% for area in areas %}
+                <option value="{{ area.id }}" {% if area.id in row.selected_area_ids %}selected{% endif %}>{{ area.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="modal-actions">
+            <button type="button" data-close-modal>Cancelar</button>
+            <button class="primary" type="submit">Guardar permisos</button>
+          </div>
+        </form>
+      </div>
+    </dialog>
+
+    <dialog class="modal-dialog modal-danger" id="user-delete-modal-{{ row.user.id }}">
+      <div class="modal-header">
+        <h3>Desactivar usuario</h3>
+        <button class="modal-close" type="button" data-close-modal>&times;</button>
+      </div>
+      <div class="modal-body">
+        <p>La cuenta <strong>{{ row.user.email }}</strong> quedara inactiva y no podra iniciar sesion.</p>
+        <form method="post">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="deactivate_user">
+          <input type="hidden" name="user_id" value="{{ row.user.id }}">
+          <div class="modal-actions">
+            <button type="button" data-close-modal>Cancelar</button>
+            <button class="icon-button danger" style="width:auto; padding:8px 12px;" type="submit">Desactivar</button>
+          </div>
+        </form>
+      </div>
+    </dialog>
+  {% endfor %}
+
+  {% for profile in role_profiles %}
+    <dialog class="modal-dialog" id="role-edit-modal-{{ profile.id }}">
+      <div class="modal-header">
+        <h3>Editar rol</h3>
+        <button class="modal-close" type="button" data-close-modal>&times;</button>
+      </div>
+      <div class="modal-body">
+        <form method="post" class="stack">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="update_role_profile">
+          <input type="hidden" name="role_profile_id" value="{{ profile.id }}">
+          <div class="form-grid">
+            <div>
+              <label>Nombre</label>
+              <input type="text" name="name" value="{{ profile.name }}" required>
+            </div>
+            <div>
+              <label>Rol base</label>
+              <select name="base_role">
+                <option value="admin" {% if profile.base_role == "admin" %}selected{% endif %}>Administrador</option>
+                <option value="operator" {% if profile.base_role == "operator" %}selected{% endif %}>Operador</option>
+                <option value="supervisor" {% if profile.base_role == "supervisor" %}selected{% endif %}>Supervisor</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label>Descripcion</label>
+            <input type="text" name="description" value="{{ profile.description }}">
+          </div>
+          <div class="form-grid">
+            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_access" {% if profile.permissions.can_access %}checked{% endif %}> Acceso</label>
+            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_schedule" {% if profile.permissions.can_schedule %}checked{% endif %}> Horarios</label>
+            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_export_buk" {% if profile.permissions.can_export_buk %}checked{% endif %}> BUK</label>
+            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_manage_workers" {% if profile.permissions.can_manage_workers %}checked{% endif %}> Trabajadores</label>
+            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_manage_shifts" {% if profile.permissions.can_manage_shifts %}checked{% endif %}> Turnos</label>
+            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_manage_areas" {% if profile.permissions.can_manage_areas %}checked{% endif %}> Areas</label>
+            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_manage_users" {% if profile.permissions.can_manage_users %}checked{% endif %}> Usuarios</label>
+            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_view_reports" {% if profile.permissions.can_view_reports %}checked{% endif %}> Reportes</label>
+            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_use_control" {% if profile.permissions.can_use_control %}checked{% endif %}> Control</label>
+          </div>
+          <div class="modal-actions">
+            <button type="button" data-close-modal>Cancelar</button>
+            <button class="primary" type="submit">Guardar rol</button>
+          </div>
+        </form>
+      </div>
+    </dialog>
+
+    <dialog class="modal-dialog modal-danger" id="role-delete-modal-{{ profile.id }}">
+      <div class="modal-header">
+        <h3>Desactivar rol</h3>
+        <button class="modal-close" type="button" data-close-modal>&times;</button>
+      </div>
+      <div class="modal-body">
+        <p>El rol <strong>{{ profile.name }}</strong> dejara de estar disponible para nuevas asignaciones.</p>
+        <form method="post">
+          {% csrf_token %}
+          <input type="hidden" name="role_profile_id" value="{{ profile.id }}">
+          <div class="modal-actions">
+            <button type="button" data-close-modal>Cancelar</button>
+            <button class="icon-button danger" style="width:auto; padding:8px 12px;" type="submit" name="action" value="deactivate_role_profile">Desactivar</button>
+          </div>
+        </form>
+      </div>
+    </dialog>
+  {% endfor %}
+{% endblock %}

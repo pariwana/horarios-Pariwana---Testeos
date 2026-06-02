@@ -21,6 +21,7 @@
 ## BUK
 - `BukExportConfig`
 - `BukExportLog`
+- `BukTemplateCompareLog`
 
 ## Gobierno
 - `MonthClosure`
