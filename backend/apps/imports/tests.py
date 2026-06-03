@@ -52,6 +52,40 @@ class WorkerImportServiceTests(TestCase):
             ).exists()
         )
 
+    def test_sync_worker_import_warns_changes_and_deactivates_missing(self):
+        missing = Worker.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            document_number="33333333",
+            first_name="Fuera",
+            last_name="Archivo",
+            area=self.area,
+            active=True,
+        )
+        csv_content = (
+            "DNI,Nombre,Apellido,Area,Sede\n"
+            f"11111111,Nombre,Nuevo,{self.area.name},Pariwana Cusco\n"
+        ).encode("utf-8")
+
+        batch = WorkerImportService.create_worker_preview(
+            tenant=self.tenant,
+            fallback_property=self.property,
+            file_name="workers.csv",
+            file_bytes=csv_content,
+            user=self.user,
+            create_missing_areas=True,
+            sync_mode=True,
+        )
+        self.assertEqual(batch.summary["updated"], 1)
+        self.assertEqual(batch.summary["to_deactivate"], 1)
+        self.assertEqual(batch.preview_rows.filter(action="deactivate", status="warning").count(), 1)
+
+        WorkerImportService.confirm_worker_import(batch=batch)
+        missing.refresh_from_db()
+        self.assertFalse(missing.active)
+        updated = Worker.objects.get(tenant=self.tenant, property=self.property, document_number="11111111")
+        self.assertEqual(updated.last_name, "Nuevo")
+
 
 class ExcelImportServiceTests(TestCase):
     def setUp(self):
@@ -278,6 +312,41 @@ class ShiftAreaImportServiceTests(TestCase):
                 buk_code="HK-N",
             ).exists()
         )
+
+    def test_sync_shift_import_warns_changes_and_deactivates_missing(self):
+        missing = Shift.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            area=self.area,
+            name="REC-T",
+            buk_code="REC-T",
+            start_time="14:45",
+            end_time="23:00",
+            active=True,
+        )
+        csv_content = (
+            "Area,Turno,Codigo BUK,Hora Inicio,Hora Fin,Inicio Break,Fin Break,Nocturno,Activo,Sede\n"
+            "Recepcion,REC-M,REC-M,07:00,15:00,10:00,10:30,0,1,Pariwana Cusco\n"
+        ).encode("utf-8")
+
+        batch = ShiftAreaImportService.create_shift_preview(
+            tenant=self.tenant,
+            fallback_property=self.property,
+            file_name="turnos.csv",
+            file_bytes=csv_content,
+            user=self.user,
+            create_missing_areas=True,
+            sync_mode=True,
+        )
+        self.assertEqual(batch.summary["updated"], 1)
+        self.assertEqual(batch.summary["to_deactivate"], 1)
+        self.assertEqual(batch.preview_rows.filter(action="deactivate", status="warning").count(), 1)
+
+        ShiftAreaImportService.confirm_shift_import(batch=batch)
+        missing.refresh_from_db()
+        self.assertFalse(missing.active)
+        updated = Shift.objects.get(tenant=self.tenant, property=self.property, buk_code="REC-M")
+        self.assertEqual(updated.start_time.strftime("%H:%M"), "07:00")
 
     def test_preview_and_confirm_shifts_xlsx(self):
         wb = Workbook()

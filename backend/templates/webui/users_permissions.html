@@ -3,11 +3,11 @@
 {% block content %}
   <div class="page-header">
     <div>
-      <h1 class="section-title">Roles y permisos <span class="info-dot" title="Aqui gestionas usuarios, roles y permisos por sede o area. Ajusta permisos solo cuando el rol base no sea suficiente.">i</span></h1>
-      <p class="compact-note">Gestiona usuarios, roles base y permisos por sede o area.</p>
+      <h1 class="section-title">Roles y permisos <span class="info-dot" title="Aqui gestionas usuarios, tipos de usuario y permisos por sede o area.">i</span></h1>
+      <p class="compact-note">Gestiona usuarios, tipos de usuario y permisos por sede o area.</p>
     </div>
     <div class="page-actions">
-      <button class="primary" type="button" data-open-modal="role-create-modal">+ Nuevo Rol</button>
+      <button class="primary" type="button" data-open-modal="role-create-modal">+ Nuevo tipo</button>
       <button type="button" data-open-modal="user-create-modal">+ Nuevo usuario</button>
     </div>
   </div>
@@ -19,7 +19,7 @@
         <thead>
           <tr>
             <th>Usuario</th>
-            <th>Rol</th>
+            <th>Tipo de usuario</th>
             <th>Permisos</th>
             <th>Areas</th>
             <th>Estado</th>
@@ -33,7 +33,7 @@
                 <div class="row-title">{{ row.user.email }}</div>
                 <div class="row-subtitle">{{ row.user.first_name }} {{ row.user.last_name }}</div>
               </td>
-              <td>{{ row.role|default:"-" }}</td>
+              <td>{{ row.role_profile_name|default:row.role_label|default:"-" }}</td>
               <td>
                 <div class="mobile-card-meta">
                   {% if row.permission.can_schedule %}<span class="badge">Horarios</span>{% endif %}
@@ -57,6 +57,7 @@
                 <span class="icon-actions">
                   <button class="icon-button" type="button" data-open-modal="user-edit-modal-{{ row.user.id }}" title="Editar permisos">&#9998;</button>
                   {% if row.user.is_active %}
+                    <button class="icon-button" type="button" data-open-modal="user-password-modal-{{ row.user.id }}" title="Restablecer contrasena">&#8635;</button>
                     <button class="icon-button danger" type="button" data-open-modal="user-delete-modal-{{ row.user.id }}" title="Desactivar usuario">&#10005;</button>
                   {% endif %}
                 </span>
@@ -72,7 +73,7 @@
             <div class="mobile-card-header">
               <div>
                 <div class="row-title">{{ row.user.email }}</div>
-                <div class="row-subtitle">Rol: {{ row.role|default:"-" }}</div>
+                <div class="row-subtitle">Tipo: {{ row.role_profile_name|default:row.role_label|default:"-" }}</div>
               </div>
               {% if row.user.is_active %}<span class="badge badge-ok">Activo</span>{% else %}<span class="badge badge-muted">Inactivo</span>{% endif %}
             </div>
@@ -85,6 +86,7 @@
             <div class="icon-actions">
               <button class="icon-button" type="button" data-open-modal="user-edit-modal-{{ row.user.id }}" title="Editar permisos">&#9998;</button>
               {% if row.user.is_active %}
+                <button class="icon-button" type="button" data-open-modal="user-password-modal-{{ row.user.id }}" title="Restablecer contrasena">&#8635;</button>
                 <button class="icon-button danger" type="button" data-open-modal="user-delete-modal-{{ row.user.id }}" title="Desactivar usuario">&#10005;</button>
               {% endif %}
             </div>
@@ -97,11 +99,11 @@
   </section>
 
   <section class="panel ops-list">
-    <h3 style="margin-top: 0;">Roles configurados</h3>
+    <h3 style="margin-top: 0;">Tipos de usuario configurados</h3>
     <table class="ops-table">
       <thead>
         <tr>
-          <th>Rol</th>
+          <th>Tipo</th>
           <th>Base</th>
           <th>Acciones</th>
         </tr>
@@ -111,7 +113,7 @@
           <tr>
             <td>
               <div class="row-title">{{ profile.name }}</div>
-              {% if profile.is_system %}<div class="row-subtitle">Rol base del sistema</div>{% endif %}
+              {% if profile.is_system %}<div class="row-subtitle">Tipo base del sistema</div>{% endif %}
             </td>
             <td>{{ profile.base_role }}</td>
             <td>
@@ -132,7 +134,7 @@
 
   <dialog class="modal-dialog" id="role-create-modal">
     <div class="modal-header">
-      <h3>Nuevo Rol</h3>
+      <h3>Nuevo tipo de usuario</h3>
       <button class="modal-close" type="button" data-close-modal>&times;</button>
     </div>
     <div class="modal-body">
@@ -141,7 +143,7 @@
         <input type="hidden" name="action" value="create_role_profile">
         <div class="form-grid">
           <div>
-            <label>Nombre del rol</label>
+            <label>Nombre del tipo</label>
             <input type="text" name="name" placeholder="Supervisor con reportes" required>
           </div>
           <div>
@@ -149,7 +151,7 @@
             <input type="text" name="code" placeholder="supervisor-reportes">
           </div>
           <div>
-            <label>Rol base</label>
+            <label>Nivel base</label>
             <select name="base_role" required>
               <option value="admin">Administrador</option>
               <option value="operator">Operador</option>
@@ -162,6 +164,7 @@
           </div>
         </div>
         {% include "webui/_permission_checkboxes.html" %}
+        <p class="compact-note">Este tipo quedara disponible para asignarlo a usuarios. El nivel base define reglas generales y los permisos afinan qué puede ver o modificar.</p>
         <div class="modal-actions">
           <button type="button" data-close-modal>Cancelar</button>
           <button class="primary" type="submit">Crear rol</button>
@@ -179,6 +182,11 @@
       <form method="post" class="stack">
         {% csrf_token %}
         <input type="hidden" name="action" value="create_user">
+        <div>
+          <label>Sede</label>
+          <input type="text" value="{{ selected_property.name }}" disabled>
+          <p class="compact-note">El usuario se creara para la sede seleccionada arriba. Para otra sede, cambia el contexto antes de crear el usuario.</p>
+        </div>
         <div class="form-grid">
           <div>
             <label>Email</label>
@@ -198,23 +206,16 @@
           </div>
         </div>
         <div>
-          <label>Perfil de rol</label>
-          <select name="role_profile_id">
-            <option value="">Sin perfil</option>
+          <label>Tipo de usuario</label>
+          <select name="role_profile_id" required>
+            <option value="">Seleccionar tipo</option>
             {% for profile in role_profiles %}
               <option value="{{ profile.id }}">{{ profile.name }}</option>
             {% endfor %}
           </select>
+          <p class="compact-note">Elige Administrador, Operador, Supervisor o un tipo personalizado. La app aplicara el nivel y permisos de ese tipo.</p>
         </div>
-        <div>
-          <label>Rol en tenant</label>
-          <select name="role" required>
-            <option value="admin">Administrador</option>
-            <option value="operator">Operador</option>
-            <option value="supervisor">Supervisor</option>
-          </select>
-        </div>
-        <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="apply_role_profile_defaults" checked> Aplicar permisos del perfil seleccionado</label>
+        <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="apply_role_profile_defaults" checked> Usar permisos sugeridos para este tipo</label>
         {% include "webui/_permission_checkboxes.html" %}
         <div>
           <label>Areas permitidas (opcional)</label>
@@ -247,26 +248,32 @@
             <label>Usuario</label>
             <input type="text" value="{{ row.user.email }}" disabled>
           </div>
+          <div>
+            <label>Sede</label>
+            <input type="text" value="{{ selected_property.name }}" disabled>
+            <p class="compact-note">Estos permisos corresponden solo a esta sede.</p>
+          </div>
           <div class="form-grid">
             <div>
-              <label>Perfil de rol</label>
-              <select name="role_profile_id">
-                <option value="">Sin perfil</option>
-                {% for profile in role_profiles %}
-                  <option value="{{ profile.id }}" {% if row.role_profile_id == profile.id %}selected{% endif %}>{{ profile.name }}</option>
-                {% endfor %}
-              </select>
+              <label>Nombres</label>
+              <input type="text" name="first_name" value="{{ row.user.first_name }}">
             </div>
             <div>
-              <label>Rol</label>
-              <select name="role">
-                <option value="admin" {% if row.role == "admin" %}selected{% endif %}>Administrador</option>
-                <option value="operator" {% if row.role == "operator" %}selected{% endif %}>Operador</option>
-                <option value="supervisor" {% if row.role == "supervisor" %}selected{% endif %}>Supervisor</option>
-              </select>
+              <label>Apellidos</label>
+              <input type="text" name="last_name" value="{{ row.user.last_name }}">
             </div>
           </div>
-          <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="apply_role_profile_defaults"> Aplicar permisos del perfil seleccionado</label>
+          <div>
+            <label>Tipo de usuario</label>
+            <select name="role_profile_id" required>
+              <option value="">Seleccionar tipo</option>
+              {% for profile in role_profiles %}
+                <option value="{{ profile.id }}" {% if row.role_profile_id == profile.id %}selected{% endif %}>{{ profile.name }}</option>
+              {% endfor %}
+            </select>
+            <p class="compact-note">Si cambias el tipo y marcas la siguiente opcion, se actualizaran los permisos sugeridos.</p>
+          </div>
+          <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="apply_role_profile_defaults"> Reemplazar permisos por los sugeridos para este tipo</label>
           <div class="form-grid">
             <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_access" {% if row.permission.can_access %}checked{% endif %}> Acceso sede</label>
             <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_schedule" {% if row.permission.can_schedule %}checked{% endif %}> Programar horarios</label>
@@ -289,6 +296,35 @@
           <div class="modal-actions">
             <button type="button" data-close-modal>Cancelar</button>
             <button class="primary" type="submit">Guardar permisos</button>
+          </div>
+        </form>
+      </div>
+    </dialog>
+
+    <dialog class="modal-dialog" id="user-password-modal-{{ row.user.id }}">
+      <div class="modal-header">
+        <h3>Restablecer contrasena</h3>
+        <button class="modal-close" type="button" data-close-modal>&times;</button>
+      </div>
+      <div class="modal-body">
+        <form method="post" class="stack">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="reset_user_password">
+          <input type="hidden" name="user_id" value="{{ row.user.id }}">
+          <p class="compact-note">Define una nueva clave para <strong>{{ row.user.email }}</strong>. No se mostrara ni se guardara en auditoria.</p>
+          <div class="form-grid">
+            <div>
+              <label>Nueva contrasena</label>
+              <input type="password" name="new_password" required autocomplete="new-password">
+            </div>
+            <div>
+              <label>Confirmar contrasena</label>
+              <input type="password" name="confirm_password" required autocomplete="new-password">
+            </div>
+          </div>
+          <div class="modal-actions">
+            <button type="button" data-close-modal>Cancelar</button>
+            <button class="primary" type="submit">Restablecer clave</button>
           </div>
         </form>
       </div>
@@ -317,7 +353,7 @@
   {% for profile in role_profiles %}
     <dialog class="modal-dialog" id="role-edit-modal-{{ profile.id }}">
       <div class="modal-header">
-        <h3>Editar rol</h3>
+        <h3>Editar tipo de usuario</h3>
         <button class="modal-close" type="button" data-close-modal>&times;</button>
       </div>
       <div class="modal-body">
@@ -331,7 +367,7 @@
               <input type="text" name="name" value="{{ profile.name }}" required>
             </div>
             <div>
-              <label>Rol base</label>
+              <label>Nivel base</label>
               <select name="base_role">
                 <option value="admin" {% if profile.base_role == "admin" %}selected{% endif %}>Administrador</option>
                 <option value="operator" {% if profile.base_role == "operator" %}selected{% endif %}>Operador</option>

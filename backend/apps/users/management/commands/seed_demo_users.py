@@ -17,24 +17,26 @@ class Command(BaseCommand):
         parser.add_argument("--supervisor-email", default="supervisor.demo@pariwana.local")
         parser.add_argument(
             "--supervisor-areas",
-            default="Recepcion,Housekeeping",
+            default="Recepción,Housekeeping",
             help="Comma-separated area names for supervisor scope.",
         )
 
-    def _upsert_user(self, *, email, password, first_name, last_name):
+    def _upsert_user(self, *, email, password, first_name, last_name, is_super_admin=False):
         user, created = User.objects.get_or_create(
             email=email.strip().lower(),
             defaults={
                 "first_name": first_name,
                 "last_name": last_name,
                 "is_active": True,
-                "is_staff": False,
-                "is_super_admin": False,
+                "is_staff": is_super_admin,
+                "is_super_admin": is_super_admin,
             },
         )
         user.first_name = first_name
         user.last_name = last_name
         user.is_active = True
+        user.is_staff = is_super_admin
+        user.is_super_admin = is_super_admin
         user.set_password(password)
         user.save()
         return user, created
@@ -102,6 +104,7 @@ class Command(BaseCommand):
             password=shared_password,
             first_name="Admin",
             last_name="Demo",
+            is_super_admin=True,
         )
         operator_user, operator_created = self._upsert_user(
             email=options["operator_email"],

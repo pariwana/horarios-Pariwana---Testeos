@@ -29,6 +29,7 @@ urlpatterns = [
     path("app/scheduling/", views.scheduling_page, name="webui-scheduling"),
     path("app/scheduling/team-report.pdf", views.scheduling_team_report_pdf, name="webui-scheduling-team-report-pdf"),
     path("app/scheduling/assign/", views.scheduling_assign, name="webui-scheduling-assign"),
+    path("app/scheduling/copy-cell-range/", views.scheduling_copy_cell_range, name="webui-scheduling-copy-cell-range"),
     path("app/scheduling/bulk-shift/", views.scheduling_bulk_shift, name="webui-scheduling-bulk-shift"),
     path("app/scheduling/bulk-state/", views.scheduling_bulk_state, name="webui-scheduling-bulk-state"),
     path("app/scheduling/bulk-range-state/", views.scheduling_bulk_range_state, name="webui-scheduling-bulk-range-state"),

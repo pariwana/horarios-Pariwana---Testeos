@@ -281,7 +281,7 @@ class SeedDemoCuscoDataCommandTests(TestCase):
         self.assertEqual(cusco.name, "Pariwana Cusco")
         self.assertEqual(lima.name, "Pariwana Lima")
         self.assertTrue(ModuleActivation.objects.filter(tenant=tenant, module_key="scheduling", is_enabled=True).exists())
-        self.assertTrue(Area.objects.filter(tenant=tenant, property=cusco, name="Recepcion").exists())
+        self.assertTrue(Area.objects.filter(tenant=tenant, property=cusco, name="Recepción").exists())
         self.assertTrue(Shift.objects.filter(tenant=tenant, property=cusco, buk_code="REC-M").exists())
         self.assertTrue(SpecialState.objects.filter(tenant=tenant, property=cusco, name="OFF").exists())
         self.assertTrue(Worker.objects.filter(tenant=tenant, property=cusco, document_number="70100101").exists())
@@ -303,12 +303,12 @@ class SeedDemoCuscoDataCommandTests(TestCase):
     def test_seed_demo_cusco_data_handles_existing_shift_name_with_other_code(self):
         tenant = Tenant.objects.create(name="Pariwana Hostels", slug="pariwana-hostels")
         cusco = Property.objects.create(tenant=tenant, name="Pariwana Cusco", slug="pariwana-cusco")
-        area = Area.objects.create(tenant=tenant, property=cusco, name="Recepcion")
+        area = Area.objects.create(tenant=tenant, property=cusco, name="Recepción")
         Shift.objects.create(
             tenant=tenant,
             property=cusco,
             area=area,
-            name="Recepcion_Manana",
+            name="Recepción_Manana",
             buk_code="LEGACY-REC-M",
             start_time="07:00",
             end_time="15:00",
@@ -321,7 +321,7 @@ class SeedDemoCuscoDataCommandTests(TestCase):
             Shift.objects.filter(
                 tenant=tenant,
                 property=cusco,
-                name="Recepcion_Manana",
+                name="Recepción_Manana",
             ).exists()
         )
 
@@ -332,7 +332,7 @@ class BootstrapLocalDemoCommandTests(TestCase):
             "bootstrap_local_demo",
             password="StrongPass123",
             days=5,
-            supervisor_areas="Recepcion,Housekeeping",
+            supervisor_areas="Recepción,Housekeeping",
         )
 
         tenant = Tenant.objects.get(slug="pariwana-hostels")

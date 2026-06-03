@@ -226,6 +226,7 @@ class WebUiModulesTests(TestCase):
             can_access=True,
         )
         ModuleActivation.objects.create(tenant=self.tenant, module_key="workers", is_enabled=True)
+        ModuleActivation.objects.create(tenant=self.tenant, module_key="excel_import", is_enabled=True)
         ModuleActivation.objects.create(tenant=self.tenant, module_key="areas", is_enabled=False)
 
     def _activate_super_admin_context(self):
@@ -514,8 +515,63 @@ class WebUiNavigationPermissionTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Asignacion")
         self.assertContains(response, "Reporte BUK")
-        self.assertNotContains(response, "Usuarios y permisos")
-        self.assertNotContains(response, "Control 15 dias")
+        self.assertContains(response, "reports-only@pariwana.test")
+        self.assertNotContains(response, 'href="/app/workers/"')
+        self.assertNotContains(response, 'href="/app/areas/"')
+        self.assertNotContains(response, 'href="/app/shifts/"')
+        self.assertNotContains(response, 'href="/app/special-states/"')
+        self.assertNotContains(response, 'href="/app/users-permissions/"')
+        self.assertNotContains(response, 'href="/app/control/"')
+        self.assertNotContains(response, 'href="/app/month-closure/"')
+        self.assertNotContains(response, 'href="/app/audit/"')
+
+    def test_topbar_shows_user_full_name_when_available(self):
+        self.user.first_name = "Rosa"
+        self.user.last_name = "Paredes"
+        self.user.save(update_fields=["first_name", "last_name"])
+        self._activate_context()
+
+        response = self.client.get(reverse("webui-dashboard"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Rosa Paredes")
+        self.assertContains(response, "Salir")
+
+    def test_operator_menu_only_shows_enabled_actions(self):
+        operator = User.objects.create_user(email="operator-nav@pariwana.test", password="StrongPass123")
+        UserTenantRole.objects.create(user=operator, tenant=self.tenant, role=RoleChoices.OPERATOR)
+        UserPropertyPermission.objects.create(
+            user=operator,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+            can_schedule=True,
+            can_manage_workers=True,
+            can_manage_shifts=True,
+            can_manage_areas=False,
+            can_manage_users=False,
+            can_use_control=False,
+            can_view_reports=False,
+            can_export_buk=False,
+        )
+        for module_key in ["workers", "areas", "shifts", "special_states", "excel_import"]:
+            ModuleActivation.objects.get_or_create(tenant=self.tenant, module_key=module_key, defaults={"is_enabled": True})
+        self.client.force_login(operator)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+
+        response = self.client.get(reverse("webui-dashboard"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'href="/app/workers/"')
+        self.assertContains(response, 'href="/app/shifts/"')
+        self.assertContains(response, 'href="/app/imports/"')
+        self.assertNotContains(response, 'href="/app/areas/"')
+        self.assertNotContains(response, 'href="/app/special-states/"')
+        self.assertNotContains(response, 'href="/app/users-permissions/"')
+        self.assertNotContains(response, 'href="/app/control/"')
 
     def test_buk_report_view_only_hides_export_and_compare(self):
         self._activate_context()
@@ -635,6 +691,7 @@ class WebUiWorkersTests(TestCase):
             can_manage_shifts=True,
         )
         ModuleActivation.objects.create(tenant=self.tenant, module_key="workers", is_enabled=True)
+        ModuleActivation.objects.create(tenant=self.tenant, module_key="excel_import", is_enabled=True)
 
     def test_create_worker_from_webui(self):
         self.client.force_login(self.user)
@@ -773,6 +830,51 @@ class WebUiWorkersTests(TestCase):
         self.assertContains(response, "11112222")
         self.assertNotContains(response, "33334444")
 
+    def test_workers_inline_import_preview_and_confirm(self):
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+        csv_bytes = (
+            "DNI,Nombre,Apellido,Area,Sede\n"
+            "12121212,Ana,Importada,Recepcion,Pariwana Cusco\n"
+        ).encode("utf-8")
+        uploaded = SimpleUploadedFile("workers.csv", csv_bytes, content_type="text/csv")
+
+        response = self.client.post(
+            reverse("webui-workers"),
+            {
+                "action": "preview_workers_inline",
+                "create_missing_areas": "1",
+                "confirm_full_sync": "1",
+                "file": uploaded,
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        batch = ImportBatch.objects.latest("id")
+        self.assertEqual(batch.source_type, "workers")
+        response = self.client.get(f"{reverse('webui-workers')}?import_batch_id={batch.id}&import_modal=1")
+        self.assertContains(response, "Vista previa de trabajadores")
+        self.assertContains(response, "Confirmar importacion")
+
+        response = self.client.post(
+            reverse("webui-workers"),
+            {
+                "action": "confirm_workers_import_inline",
+                "batch_id": str(batch.id),
+                "confirm_apply_sync": "1",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(
+            Worker.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                document_number="12121212",
+            ).exists()
+        )
+
 
 class WebUiShiftsTests(TestCase):
     def setUp(self):
@@ -790,6 +892,7 @@ class WebUiShiftsTests(TestCase):
             can_manage_shifts=True,
         )
         ModuleActivation.objects.create(tenant=self.tenant, module_key="shifts", is_enabled=True)
+        ModuleActivation.objects.create(tenant=self.tenant, module_key="excel_import", is_enabled=True)
 
     def test_create_shift_from_webui(self):
         self.client.force_login(self.user)
@@ -935,6 +1038,51 @@ class WebUiShiftsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "REC-A")
         self.assertNotContains(response, "REC-I")
+
+    def test_shifts_inline_import_preview_and_confirm(self):
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+        csv_bytes = (
+            "Area,Turno,Codigo BUK,Hora Inicio,Hora Fin,Nocturno,Activo,Sede\n"
+            "Recepcion,REC-T,REC-T,14:45,23:00,0,1,Pariwana Cusco\n"
+        ).encode("utf-8")
+        uploaded = SimpleUploadedFile("turnos.csv", csv_bytes, content_type="text/csv")
+
+        response = self.client.post(
+            reverse("webui-shifts"),
+            {
+                "action": "preview_shifts_inline",
+                "create_missing_areas": "1",
+                "confirm_full_sync": "1",
+                "file": uploaded,
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        batch = ImportBatch.objects.latest("id")
+        self.assertEqual(batch.source_type, "shifts_area")
+        response = self.client.get(f"{reverse('webui-shifts')}?import_batch_id={batch.id}&import_modal=1")
+        self.assertContains(response, "Vista previa de turnos")
+        self.assertContains(response, "Confirmar importacion")
+
+        response = self.client.post(
+            reverse("webui-shifts"),
+            {
+                "action": "confirm_shifts_import_inline",
+                "batch_id": str(batch.id),
+                "confirm_apply_sync": "1",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(
+            Shift.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                buk_code="REC-T",
+            ).exists()
+        )
 
     def test_auto_shifts_page_can_update_and_deactivate(self):
         auto_shift = Shift.objects.create(
@@ -1484,6 +1632,39 @@ class WebUiSchedulingTests(TestCase):
             ).exists()
         )
 
+    def test_scheduling_assign_ajax_creates_assignment(self):
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+
+        response = self.client.post(
+            reverse("webui-scheduling-assign"),
+            {
+                "month": "2026-06",
+                "worker_id": self.worker.id,
+                "work_date": "2026-06-15",
+                "assignment_value": f"shift:{self.shift.id}",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+            HTTP_ACCEPT="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["display_code"], "REC-M")
+        self.assertEqual(payload["assignment_value"], f"shift:{self.shift.id}")
+        self.assertTrue(
+            ScheduleAssignment.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                worker=self.worker,
+                date="2026-06-15",
+                shift=self.shift,
+            ).exists()
+        )
+
     def test_scheduling_assign_can_clear_existing_assignment(self):
         ScheduleAssignment.objects.create(
             tenant=self.tenant,
@@ -1524,6 +1705,45 @@ class WebUiSchedulingTests(TestCase):
                 user=self.user,
                 action="scheduling_assignment_delete",
                 entity_type="ScheduleAssignment",
+            ).exists()
+        )
+
+    def test_scheduling_assign_ajax_can_clear_existing_assignment(self):
+        ScheduleAssignment.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            worker=self.worker,
+            date="2026-06-18",
+            shift=self.shift,
+        )
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+
+        response = self.client.post(
+            reverse("webui-scheduling-assign"),
+            {
+                "month": "2026-06",
+                "worker_id": self.worker.id,
+                "work_date": "2026-06-18",
+                "assignment_value": "",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+            HTTP_ACCEPT="application/json",
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["is_empty"])
+        self.assertEqual(payload["display_code"], "")
+        self.assertFalse(
+            ScheduleAssignment.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                worker=self.worker,
+                date="2026-06-18",
             ).exists()
         )
 
@@ -1625,6 +1845,107 @@ class WebUiSchedulingTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'data-day-date="2026-06-15" class="focus-day-header"')
+
+    def test_scheduling_page_shows_copy_button_for_assigned_cells(self):
+        ScheduleAssignment.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            worker=self.worker,
+            date="2026-06-15",
+            shift=self.shift,
+        )
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+
+        response = self.client.get(reverse("webui-scheduling"), {"month": "2026-06"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-open-copy-assignment')
+        self.assertContains(response, 'data-assignment-value="shift:')
+        self.assertContains(response, 'id="copy-assignment-modal"')
+
+    def test_scheduling_copy_cell_range_copies_assignment_to_worker_dates(self):
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+
+        response = self.client.post(
+            reverse("webui-scheduling-copy-cell-range"),
+            {
+                "month": "2026-06",
+                "area_id": str(self.area.id),
+                "source_worker_id": str(self.worker.id),
+                "source_date": "2026-06-10",
+                "assignment_value": f"shift:{self.shift.id}",
+                "date_from": "2026-06-10",
+                "date_to": "2026-06-12",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        for work_date in ["2026-06-10", "2026-06-11", "2026-06-12"]:
+            self.assertTrue(
+                ScheduleAssignment.objects.filter(
+                    tenant=self.tenant,
+                    property=self.property,
+                    worker=self.worker,
+                    date=work_date,
+                    shift=self.shift,
+                ).exists()
+            )
+        log = AuditLog.objects.filter(
+            tenant=self.tenant,
+            property=self.property,
+            user=self.user,
+            action="scheduling_copy_cell_range_apply",
+            entity_type="ScheduleAssignment",
+        ).latest("id")
+        self.assertEqual(log.after["copied"], 3)
+        self.assertEqual(log.after["date_from"], "2026-06-10")
+        self.assertEqual(log.after["date_to"], "2026-06-12")
+
+    def test_scheduling_copy_cell_range_blocks_closed_target_month(self):
+        MonthClosure.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            year=2026,
+            month=6,
+            status=MonthClosureStatus.CLOSED,
+            closed_by=self.user,
+        )
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+
+        response = self.client.post(
+            reverse("webui-scheduling-copy-cell-range"),
+            {
+                "month": "2026-06",
+                "source_worker_id": str(self.worker.id),
+                "source_date": "2026-06-10",
+                "assignment_value": f"shift:{self.shift.id}",
+                "date_from": "2026-06-10",
+                "date_to": "2026-06-12",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(
+            ScheduleAssignment.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                worker=self.worker,
+                date__gte="2026-06-10",
+                date__lte="2026-06-12",
+            ).exists()
+        )
 
     def test_scheduling_bulk_state_creates_assignments(self):
         self.client.force_login(self.user)
@@ -4529,6 +4850,8 @@ class WebUiImportsTests(TestCase):
         self._activate_context()
         response = self.client.get(reverse("webui-imports"))
         self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "Importar Excel original")
+        self.assertNotContains(response, 'value="preview_excel"')
 
     def test_imports_page_shows_human_readable_source_label(self):
         ImportBatch.objects.create(
@@ -4559,6 +4882,7 @@ class WebUiImportsTests(TestCase):
             {
                 "action": "preview_workers",
                 "create_missing_areas": "1",
+                "confirm_full_sync": "1",
                 "file": uploaded,
             },
         )
@@ -4571,6 +4895,7 @@ class WebUiImportsTests(TestCase):
             {
                 "action": "confirm_batch",
                 "batch_id": str(batch.id),
+                "confirm_apply_sync": "1",
             },
         )
         self.assertEqual(response.status_code, 302)
@@ -4673,6 +4998,7 @@ class WebUiImportsTests(TestCase):
             {
                 "action": "preview_shifts_area",
                 "create_missing_areas": "1",
+                "confirm_full_sync": "1",
                 "file": uploaded,
             },
         )
@@ -4686,6 +5012,7 @@ class WebUiImportsTests(TestCase):
             {
                 "action": "confirm_batch",
                 "batch_id": str(batch.id),
+                "confirm_apply_sync": "1",
             },
         )
         self.assertEqual(response.status_code, 302)
@@ -4739,6 +5066,7 @@ class WebUiImportsTests(TestCase):
             {
                 "action": "preview_shifts_area",
                 "create_missing_areas": "1",
+                "confirm_full_sync": "1",
                 "file": uploaded,
             },
         )
@@ -4752,6 +5080,7 @@ class WebUiImportsTests(TestCase):
             {
                 "action": "confirm_batch",
                 "batch_id": str(batch.id),
+                "confirm_apply_sync": "1",
             },
         )
         self.assertEqual(response.status_code, 302)
@@ -4790,6 +5119,34 @@ class WebUiImportsTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "<strong>workers</strong>: 2", html=True)
         self.assertContains(response, "&quot;entity&quot;: &quot;assignment&quot;")
+
+    def test_imports_preview_modal_shows_blocking_errors(self):
+        batch = ImportBatch.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            source_type="shifts_area",
+            file_name="turnos.xlsx",
+            status="preview",
+            created_by=self.user,
+            summary={"detected_rows": 1, "errors": 1},
+        )
+        ImportPreviewRow.objects.create(
+            batch=batch,
+            sheet_name="shifts_import",
+            row_number=2,
+            action="skip",
+            status="error",
+            message="area does not exist: Recepción",
+            payload={"area_name": "Recepción"},
+        )
+
+        self._activate_context()
+        response = self.client.get(reverse("webui-imports"), {"batch_id": str(batch.id)})
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Problemas detectados")
+        self.assertContains(response, "Fila 2")
+        self.assertContains(response, "area does not exist: Recepción")
+        self.assertContains(response, "El boton esta deshabilitado porque hay errores bloqueantes.")
 
     def test_operator_without_shift_permission_cannot_preview_shift_import(self):
         operator = User.objects.create_user(email="imports-operator@pariwana.test", password="StrongPass123")
@@ -4916,6 +5273,37 @@ class WebUiMonthClosureTests(TestCase):
             },
         )
         self.assertEqual(response.status_code, 302)
+        self.assertFalse(
+            ScheduleAssignment.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                worker=self.worker,
+                date="2026-06-20",
+            ).exists()
+        )
+
+    def test_scheduling_assign_ajax_blocked_when_month_closed(self):
+        self._activate_context()
+        self.client.post(
+            reverse("webui-month-closure"),
+            {"action": "close", "month": "2026-06"},
+        )
+
+        response = self.client.post(
+            reverse("webui-scheduling-assign"),
+            {
+                "month": "2026-06",
+                "worker_id": self.worker.id,
+                "work_date": "2026-06-20",
+                "assignment_value": f"shift:{self.shift.id}",
+            },
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+            HTTP_ACCEPT="application/json",
+        )
+        self.assertEqual(response.status_code, 409)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertIn("mes esta cerrado", payload["message"])
         self.assertFalse(
             ScheduleAssignment.objects.filter(
                 tenant=self.tenant,
@@ -5115,6 +5503,11 @@ class WebUiUsersPermissionsTests(TestCase):
         self._activate_context()
         response = self.client.get(reverse("webui-users-permissions"))
         self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Pariwana Cusco")
+        self.assertContains(response, "Tipo de usuario")
+        self.assertContains(response, "El usuario se creara para la sede seleccionada arriba.")
+        self.assertNotContains(response, "Perfil de rol")
+        self.assertNotContains(response, "Rol base")
 
     def test_create_user_and_permissions(self):
         self._activate_context()
@@ -5238,6 +5631,8 @@ class WebUiUsersPermissionsTests(TestCase):
             {
                 "action": "update_property_permissions",
                 "user_id": str(target.id),
+                "first_name": "Usuario",
+                "last_name": "Actualizado",
                 "role": "supervisor",
                 "can_access": "on",
                 "can_export_buk": "on",
@@ -5245,6 +5640,9 @@ class WebUiUsersPermissionsTests(TestCase):
             },
         )
         self.assertEqual(response.status_code, 302)
+        target.refresh_from_db()
+        self.assertEqual(target.first_name, "Usuario")
+        self.assertEqual(target.last_name, "Actualizado")
         role = UserTenantRole.objects.get(user=target, tenant=self.tenant)
         self.assertEqual(role.role, RoleChoices.SUPERVISOR)
         perm = UserPropertyPermission.objects.get(user=target, tenant=self.tenant, property=self.property)
@@ -5265,6 +5663,16 @@ class WebUiUsersPermissionsTests(TestCase):
                 tenant=self.tenant,
                 property=self.property,
                 area=self.area_2,
+            ).exists()
+        )
+        self.assertTrue(
+            AuditLog.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                user=self.user,
+                action="update",
+                entity_type="User",
+                entity_id=str(target.id),
             ).exists()
         )
 
@@ -5288,6 +5696,39 @@ class WebUiUsersPermissionsTests(TestCase):
         self.assertEqual(response.status_code, 302)
         target.refresh_from_db()
         self.assertFalse(target.is_active)
+
+    def test_reset_user_password_records_audit(self):
+        target = User.objects.create_user(email="reset-ui@pariwana.test", password="StrongPass123")
+        UserTenantRole.objects.create(user=target, tenant=self.tenant, role=RoleChoices.OPERATOR)
+        UserPropertyPermission.objects.create(
+            user=target,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+        )
+        self._activate_context()
+        response = self.client.post(
+            reverse("webui-users-permissions"),
+            {
+                "action": "reset_user_password",
+                "user_id": str(target.id),
+                "new_password": "NewStrongPass123",
+                "confirm_password": "NewStrongPass123",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        target.refresh_from_db()
+        self.assertTrue(target.check_password("NewStrongPass123"))
+        self.assertTrue(
+            AuditLog.objects.filter(
+                tenant=self.tenant,
+                property=self.property,
+                user=self.user,
+                action="password_reset",
+                entity_type="User",
+                entity_id=str(target.id),
+            ).exists()
+        )
 
 
 class WebUiBackupTests(TestCase):
@@ -5569,7 +6010,7 @@ class WebUiSmokeCommandTests(TestCase):
             "bootstrap_local_demo",
             password="StrongPass123",
             days=7,
-            supervisor_areas="Recepcion,Housekeeping",
+            supervisor_areas="Recepción,Housekeeping",
         )
         call_command("smoke_test_webui")
 
@@ -5578,7 +6019,7 @@ class WebUiSmokeCommandTests(TestCase):
             "bootstrap_local_demo",
             password="StrongPass123",
             days=5,
-            supervisor_areas="Recepcion,Housekeeping",
+            supervisor_areas="Recepción,Housekeeping",
         )
         User.objects.filter(email="operador.demo@pariwana.local").delete()
         with self.assertRaises(CommandError):
@@ -5589,6 +6030,6 @@ class WebUiSmokeCommandTests(TestCase):
             "bootstrap_local_demo",
             password="StrongPass123",
             days=5,
-            supervisor_areas="Recepcion,Housekeeping",
+            supervisor_areas="Recepción,Housekeeping",
         )
         call_command("qa_check_local")

@@ -30,7 +30,7 @@ INITIAL_MODULES = [
 ]
 
 AREAS = [
-    ("Recepcion", "operativa"),
+    ("Recepción", "operativa"),
     ("Housekeeping", "operativa"),
     ("Bar", "operativa"),
     ("Cocina", "operativa"),
@@ -43,9 +43,9 @@ SPECIAL_STATES = [
 ]
 
 SHIFT_DEFINITIONS = [
-    ("Recepcion", "Recepcion_Manana", "REC-M", "07:00", "15:00"),
-    ("Recepcion", "Recepcion_Tarde", "REC-T", "15:00", "23:00"),
-    ("Recepcion", "Recepcion_Noche", "REC-N", "23:00", "07:00"),
+    ("Recepción", "Recepción_Manana", "REC-M", "07:00", "15:00"),
+    ("Recepción", "Recepción_Tarde", "REC-T", "15:00", "23:00"),
+    ("Recepción", "Recepción_Noche", "REC-N", "23:00", "07:00"),
     ("Housekeeping", "Housekeeping_Manana", "HK-M", "08:00", "16:45"),
     ("Housekeeping", "Housekeeping_Tarde", "HK-T", "13:30", "22:15"),
     ("Bar", "Bar_Tarde", "BAR-T", "15:15", "00:00"),
@@ -54,9 +54,9 @@ SHIFT_DEFINITIONS = [
 ]
 
 WORKERS = [
-    ("70100101", "Ana", "Quispe", "Recepcion"),
-    ("70100102", "Luis", "Rojas", "Recepcion"),
-    ("70100103", "Mariela", "Puma", "Recepcion"),
+    ("70100101", "Ana", "Quispe", "Recepción"),
+    ("70100102", "Luis", "Rojas", "Recepción"),
+    ("70100103", "Mariela", "Puma", "Recepción"),
     ("70100201", "Karla", "Huaman", "Housekeeping"),
     ("70100202", "Jorge", "Solis", "Housekeeping"),
     ("70100203", "Martha", "Mamani", "Housekeeping"),

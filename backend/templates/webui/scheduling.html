@@ -143,6 +143,46 @@
       color: #9ca3af;
       font-weight: 400;
     }
+    .scheduling-edit-form.is-saving select {
+      border-color: #f59e0b;
+      background: #fffbeb;
+    }
+    .scheduling-edit-form.is-saved select {
+      border-color: #10b981;
+      background: #ecfdf5;
+    }
+    .scheduling-edit-form.is-error select {
+      border-color: #dc2626;
+      background: #fef2f2;
+    }
+    .assignment-status {
+      min-height: 16px;
+      font-size: 11px;
+      color: #6b7280;
+    }
+    .assignment-status.is-error {
+      color: #b91c1c;
+      font-weight: 700;
+    }
+    .assignment-cell-actions {
+      display: flex;
+      gap: 4px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .copy-assignment-button {
+      width: fit-content;
+      border: 1px solid #d1d5db;
+      background: #ffffff;
+      color: #374151;
+      border-radius: 4px;
+      padding: 2px 6px;
+      font-size: 11px;
+      line-height: 1.25;
+    }
+    .copy-assignment-button[hidden] {
+      display: none;
+    }
     .scheduling-mobile-list {
       display: none;
     }
@@ -1157,7 +1197,7 @@
             {% for cell in row.cells %}
               <td data-day-date="{{ cell.date|date:'Y-m-d' }}" class="{% if cell.is_focus %}focus-day-cell{% endif %} {% if cell.is_recent_edit %}recent-edit-cell{% endif %}" {% if cell.is_night %}style="background:#eef2ff;"{% endif %}>
                 {% if cell.editable %}
-                  <form method="post" action="/app/scheduling/assign/" class="scheduling-edit-form">
+                  <form method="post" action="/app/scheduling/assign/" class="scheduling-edit-form" data-ajax-assign>
                     {% csrf_token %}
                     <input type="hidden" name="month" value="{{ month_value }}">
                     <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
@@ -1165,7 +1205,7 @@
                     <input type="hidden" name="focus_date" value="{{ focus_date_value|default:'' }}">
                     <input type="hidden" name="worker_id" value="{{ row.worker.id }}">
                     <input type="hidden" name="work_date" value="{{ cell.date|date:'Y-m-d' }}">
-                    <select name="assignment_value" onchange="this.form.submit()">
+                    <select name="assignment_value" data-last-value="{{ cell.selected_value|default:'' }}">
                       <option value="">--</option>
                       {% for shift in cell.shift_options %}
                         <option value="shift:{{ shift.id }}" {% if cell.selected_shift_id == shift.id %}selected{% endif %}>
@@ -1179,6 +1219,20 @@
                       {% endfor %}
                     </select>
                     <span class="assignment-code {% if not cell.display_code %}is-empty{% endif %}">{{ cell.display_code|default:'-' }}</span>
+                    <span class="assignment-cell-actions">
+                      <button
+                        type="button"
+                        class="copy-assignment-button"
+                        data-open-copy-assignment
+                        data-worker-id="{{ row.worker.id }}"
+                        data-worker-name="{{ row.worker.last_name }}, {{ row.worker.first_name }}"
+                        data-source-date="{{ cell.date|date:'Y-m-d' }}"
+                        data-assignment-value="{{ cell.selected_value|default:'' }}"
+                        data-display-code="{{ cell.display_code|default:'' }}"
+                        {% if not cell.selected_value %}hidden{% endif %}
+                      >Copiar</button>
+                    </span>
+                    <span class="assignment-status" aria-live="polite"></span>
                   </form>
                 {% else %}
                   <span class="assignment-code {% if not cell.display_code %}is-empty{% endif %}">{{ cell.display_code|default:'-' }}</span>
@@ -1215,7 +1269,7 @@
                   <span>{{ cell.date|date:'d-m-Y' }}</span>
                 </div>
                 {% if cell.editable %}
-                  <form method="post" action="/app/scheduling/assign/" class="scheduling-edit-form">
+                  <form method="post" action="/app/scheduling/assign/" class="scheduling-edit-form" data-ajax-assign>
                     {% csrf_token %}
                     <input type="hidden" name="month" value="{{ month_value }}">
                     <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
@@ -1223,7 +1277,7 @@
                     <input type="hidden" name="focus_date" value="{{ focus_date_value|default:'' }}">
                     <input type="hidden" name="worker_id" value="{{ row.worker.id }}">
                     <input type="hidden" name="work_date" value="{{ cell.date|date:'Y-m-d' }}">
-                    <select name="assignment_value" onchange="this.form.submit()">
+                    <select name="assignment_value" data-last-value="{{ cell.selected_value|default:'' }}">
                       <option value="">--</option>
                       {% for shift in cell.shift_options %}
                         <option value="shift:{{ shift.id }}" {% if cell.selected_shift_id == shift.id %}selected{% endif %}>
@@ -1237,6 +1291,20 @@
                       {% endfor %}
                     </select>
                     <span class="assignment-code {% if not cell.display_code %}is-empty{% endif %}">{{ cell.display_code|default:'-' }}</span>
+                    <span class="assignment-cell-actions">
+                      <button
+                        type="button"
+                        class="copy-assignment-button"
+                        data-open-copy-assignment
+                        data-worker-id="{{ row.worker.id }}"
+                        data-worker-name="{{ row.worker.last_name }}, {{ row.worker.first_name }}"
+                        data-source-date="{{ cell.date|date:'Y-m-d' }}"
+                        data-assignment-value="{{ cell.selected_value|default:'' }}"
+                        data-display-code="{{ cell.display_code|default:'' }}"
+                        {% if not cell.selected_value %}hidden{% endif %}
+                      >Copiar</button>
+                    </span>
+                    <span class="assignment-status" aria-live="polite"></span>
                   </form>
                 {% else %}
                   <span class="assignment-code {% if not cell.display_code %}is-empty{% endif %}">{{ cell.display_code|default:'-' }}</span>
@@ -1250,6 +1318,38 @@
       {% endfor %}
     </div>
   </section>
+  <dialog id="copy-assignment-modal" class="modal-dialog">
+    <div class="modal-header">
+      <h3>Copiar turno a varios dias</h3>
+      <button type="button" class="modal-close" data-close-modal aria-label="Cerrar">x</button>
+    </div>
+    <form method="post" action="/app/scheduling/copy-cell-range/" class="modal-body">
+      {% csrf_token %}
+      <input type="hidden" name="month" value="{{ month_value }}">
+      <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+      <input type="hidden" name="worker_q" value="{{ worker_query|default:'' }}">
+      <input type="hidden" name="focus_date" value="{{ focus_date_value|default:'' }}">
+      <input type="hidden" name="source_worker_id" id="copy-source-worker-id">
+      <input type="hidden" name="source_date" id="copy-source-date">
+      <input type="hidden" name="assignment_value" id="copy-assignment-value">
+      <p class="compact-note" id="copy-assignment-summary">Selecciona una celda asignada para copiarla.</p>
+      <div class="grid-2">
+        <div>
+          <label>Desde</label>
+          <input type="date" name="date_from" id="copy-date-from" required>
+        </div>
+        <div>
+          <label>Hasta</label>
+          <input type="date" name="date_to" id="copy-date-to" required>
+        </div>
+      </div>
+      <p class="compact-note">La copia reemplazara cualquier turno o estado especial existente en esas fechas para el mismo trabajador.</p>
+      <div class="modal-actions">
+        <button type="button" data-close-modal>Cancelar</button>
+        <button class="primary" type="submit">Copiar asignacion</button>
+      </div>
+    </form>
+  </dialog>
   <script>
     (function () {
       var params = new URLSearchParams(window.location.search);
@@ -1283,6 +1383,119 @@
           wrap.scrollLeft = Math.max(0, desiredLeft);
         }
       }
+
+      document.querySelectorAll("form[data-ajax-assign]").forEach(function (form) {
+        var select = form.querySelector('select[name="assignment_value"]');
+        var code = form.querySelector(".assignment-code");
+        var status = form.querySelector(".assignment-status");
+        var copyButton = form.querySelector("[data-open-copy-assignment]");
+        var workDateInput = form.querySelector('input[name="work_date"]');
+        var requestToken = 0;
+        if (!select || !code || !status) return;
+
+        function setState(state, text) {
+          form.classList.remove("is-saving", "is-saved", "is-error");
+          status.classList.remove("is-error");
+          if (state) form.classList.add(state);
+          status.textContent = text || "";
+          if (state === "is-error") status.classList.add("is-error");
+        }
+
+        select.addEventListener("change", function () {
+          var previousValue = select.getAttribute("data-last-value") || "";
+          var currentToken = ++requestToken;
+          var formData = new FormData(form);
+          setState("is-saving", "Guardando...");
+          select.disabled = true;
+
+          fetch(form.action, {
+            method: "POST",
+            body: formData,
+            headers: {
+              "X-Requested-With": "XMLHttpRequest",
+              "Accept": "application/json"
+            }
+          })
+            .then(function (response) {
+              return response.json().catch(function () {
+                return { ok: false, message: "No se pudo interpretar la respuesta del servidor." };
+              }).then(function (payload) {
+                if (!response.ok || !payload.ok) {
+                  throw payload;
+                }
+                return payload;
+              });
+            })
+            .then(function (payload) {
+              if (currentToken !== requestToken) return;
+              code.textContent = payload.display_code || "-";
+              if (payload.is_empty) {
+                code.classList.add("is-empty");
+                if (copyButton) {
+                  copyButton.hidden = true;
+                  copyButton.setAttribute("data-assignment-value", "");
+                  copyButton.setAttribute("data-display-code", "");
+                }
+              } else {
+                code.classList.remove("is-empty");
+                if (copyButton) {
+                  copyButton.hidden = false;
+                  copyButton.setAttribute("data-assignment-value", payload.assignment_value || select.value || "");
+                  copyButton.setAttribute("data-display-code", payload.display_code || "");
+                  if (workDateInput) {
+                    copyButton.setAttribute("data-source-date", workDateInput.value || "");
+                  }
+                }
+              }
+              select.setAttribute("data-last-value", payload.assignment_value || select.value || "");
+              setState("is-saved", "Guardado");
+              window.setTimeout(function () {
+                if (currentToken === requestToken && form.classList.contains("is-saved")) {
+                  setState("", "");
+                }
+              }, 1400);
+            })
+            .catch(function (payload) {
+              if (currentToken !== requestToken) return;
+              select.value = previousValue;
+              setState("is-error", (payload && payload.message) ? payload.message : "Error al guardar. Intenta otra vez.");
+            })
+            .finally(function () {
+              if (currentToken === requestToken) {
+                select.disabled = false;
+              }
+            });
+        });
+      });
+
+      var copyModal = document.getElementById("copy-assignment-modal");
+      var copySummary = document.getElementById("copy-assignment-summary");
+      var copyWorkerInput = document.getElementById("copy-source-worker-id");
+      var copySourceDateInput = document.getElementById("copy-source-date");
+      var copyAssignmentInput = document.getElementById("copy-assignment-value");
+      var copyDateFromInput = document.getElementById("copy-date-from");
+      var copyDateToInput = document.getElementById("copy-date-to");
+      document.querySelectorAll("[data-open-copy-assignment]").forEach(function (button) {
+        button.addEventListener("click", function () {
+          if (!copyModal || !copyWorkerInput || !copySourceDateInput || !copyAssignmentInput || !copyDateFromInput || !copyDateToInput) return;
+          var workerName = button.getAttribute("data-worker-name") || "Trabajador";
+          var sourceDate = button.getAttribute("data-source-date") || "";
+          var assignmentValue = button.getAttribute("data-assignment-value") || "";
+          var displayCode = button.getAttribute("data-display-code") || "";
+          if (!assignmentValue || !sourceDate) return;
+          copyWorkerInput.value = button.getAttribute("data-worker-id") || "";
+          copySourceDateInput.value = sourceDate;
+          copyAssignmentInput.value = assignmentValue;
+          copyDateFromInput.value = sourceDate;
+          copyDateToInput.value = sourceDate;
+          if (copySummary) {
+            copySummary.textContent = "Copiar " + (displayCode || "asignacion") + " de " + workerName + " desde el " + sourceDate + ".";
+          }
+          if (typeof copyModal.showModal === "function") {
+            copyModal.showModal();
+          }
+        });
+      });
 
       var rows = document.getElementById("multi-range-rows");
       var template = document.getElementById("multi-range-row-template");

@@ -10,7 +10,7 @@ class Command(BaseCommand):
         parser.add_argument("--days", type=int, default=15, help="Days of schedule assignments to seed (default: 15).")
         parser.add_argument(
             "--supervisor-areas",
-            default="Recepcion,Housekeeping",
+            default="Recepción,Housekeeping",
             help="Comma-separated area names for supervisor scope.",
         )
 

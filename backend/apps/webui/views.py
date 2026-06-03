@@ -12,12 +12,14 @@ from urllib.parse import urlencode
 from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.views import redirect_to_login
+from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Max, Min, Q
 from django.db.models.deletion import ProtectedError
 from django.db.utils import OperationalError, ProgrammingError
-from django.http import HttpResponse, HttpResponseForbidden
+from django.http import HttpResponse, HttpResponseForbidden, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils.text import slugify
@@ -47,7 +49,7 @@ from apps.modules.models import ModuleActivation
 from apps.modules.services import ModuleActivationService
 from apps.tenants.models import Property, Tenant, TenantStatus, TenantSupportAccessSession
 from apps.tenants.services import TenantSupportService
-from apps.users.models import RoleProfile, User, UserAreaPermission, UserPropertyPermission, UserTenantRole
+from apps.users.models import RoleChoices, RoleProfile, User, UserAreaPermission, UserPropertyPermission, UserTenantRole
 from apps.users.services import PROPERTY_PERMISSION_KEYS, PermissionService, RoleProfileService
 from apps.workers.models import Area, Shift, Worker
 from apps.webui.forms import AreaForm, PropertyForm, ShiftForm, SpecialStateForm, TenantForm, WorkerForm
@@ -132,6 +134,96 @@ def _format_import_preview_value(value):
     if normalized is None:
         return "-"
     return str(normalized)
+
+
+def _import_batch_has_errors(batch):
+    summary = batch.summary if isinstance(batch.summary, dict) else {}
+    try:
+        if int(summary.get("errors", 0) or 0) > 0:
+            return True
+    except (TypeError, ValueError):
+        pass
+    return batch.preview_rows.filter(status="error").exists()
+
+
+def _build_import_batch_preview_context(batch, *, row_limit=50):
+    if not batch:
+        return {
+            "selected_batch_summary_rows": [],
+            "preview_rows": [],
+            "preview_has_more_rows": False,
+            "preview_total_rows": 0,
+            "preview_blocking_errors": False,
+        }
+
+    summary_rows = []
+    summary_data = batch.summary if isinstance(batch.summary, dict) else {}
+    for raw_key, raw_value in summary_data.items():
+        key_label = str(raw_key).replace("_", " ").capitalize()
+        normalized_value = _normalize_import_preview_value(raw_value)
+        if isinstance(normalized_value, dict):
+            summary_rows.append(
+                {
+                    "key": key_label,
+                    "is_block": False,
+                    "items": [
+                        {
+                            "subkey": str(subkey).replace("_", " "),
+                            "subvalue": _format_import_preview_value(subvalue),
+                        }
+                        for subkey, subvalue in normalized_value.items()
+                    ],
+                    "value": "",
+                }
+            )
+        elif isinstance(normalized_value, list):
+            summary_rows.append(
+                {
+                    "key": key_label,
+                    "is_block": True,
+                    "items": [],
+                    "value": _format_import_preview_value(normalized_value),
+                }
+            )
+        else:
+            summary_rows.append(
+                {
+                    "key": key_label,
+                    "is_block": False,
+                    "items": [],
+                    "value": _format_import_preview_value(normalized_value),
+                }
+            )
+
+    total_rows = batch.preview_rows.count()
+    preview_rows = [
+        {
+            "sheet_name": item.sheet_name,
+            "row_number": item.row_number,
+            "status": item.status,
+            "action": item.action,
+            "message": item.message,
+            "payload_pretty": _format_import_preview_value(item.payload),
+        }
+        for item in batch.preview_rows.order_by("sheet_name", "row_number")[:row_limit]
+    ]
+    issue_rows = [
+        {
+            "row_number": item.row_number,
+            "status": item.status,
+            "action": item.action,
+            "message": item.message or "Revisa el detalle de la fila.",
+        }
+        for item in batch.preview_rows.filter(status__in=["error", "warning"]).order_by("status", "row_number")[:8]
+    ]
+    return {
+        "selected_batch_summary_rows": summary_rows,
+        "preview_rows": preview_rows,
+        "preview_issue_rows": issue_rows,
+        "preview_has_more_rows": total_rows > row_limit,
+        "preview_total_rows": total_rows,
+        "preview_blocking_errors": _import_batch_has_errors(batch),
+    }
 
 
 def _worker_active_on_date(worker, target_date):
@@ -240,13 +332,13 @@ def _build_nav_items(user, tenant, property_obj, current_path="/app/"):
         items.append(nav_item("Asignacion", "/app/scheduling/"))
     if _can_nav_module(user, tenant, property_obj, "properties", roles=["admin"]):
         other_items.append(nav_item("Sedes", "/app/properties/"))
-    if _can_nav_module(user, tenant, property_obj, "workers", "can_access"):
+    if _can_nav_module(user, tenant, property_obj, "workers", "can_manage_workers"):
         items.append(nav_item("Trabajadores", "/app/workers/"))
-    if _can_nav_module(user, tenant, property_obj, "areas", "can_access"):
+    if _can_nav_module(user, tenant, property_obj, "areas", "can_manage_areas"):
         items.append(nav_item("Areas", "/app/areas/"))
-    if _can_nav_module(user, tenant, property_obj, "shifts", "can_access"):
+    if _can_nav_module(user, tenant, property_obj, "shifts", "can_manage_shifts"):
         items.append(nav_item("Turnos", "/app/shifts/"))
-    if _can_nav_module(user, tenant, property_obj, "special_states", "can_access"):
+    if _can_nav_module(user, tenant, property_obj, "special_states", roles=["admin"]):
         items.append(nav_item("Estados especiales", "/app/special-states/"))
     if _can_nav_module(user, tenant, property_obj, "users_permissions", "can_manage_users"):
         items.append(nav_item("Roles y permisos", "/app/users-permissions/"))
@@ -261,11 +353,11 @@ def _build_nav_items(user, tenant, property_obj, current_path="/app/"):
             other_items.append(nav_item("Importaciones", "/app/imports/"))
     if _can_nav_module(user, tenant, property_obj, "backup", roles=["admin"]):
         other_items.append(nav_item("Backup JSON", "/app/backup/"))
-    if _can_nav_module(user, tenant, property_obj, "month_closure", "can_access"):
+    if _can_nav_module(user, tenant, property_obj, "month_closure", roles=["admin"]):
         items.append(nav_item("Cierre de mes", "/app/month-closure/"))
     if _can_nav_module(user, tenant, property_obj, "control", "can_use_control"):
         items.append(nav_item("Control 15 dias", "/app/control/"))
-    if _can_nav_module(user, tenant, property_obj, "audit", "can_access"):
+    if _can_nav_module(user, tenant, property_obj, "audit", roles=["admin"]):
         other_items.append(nav_item("Auditoria", "/app/audit/"))
     if (
         _can_nav_module(user, tenant, property_obj, "buk_preview", "can_view_reports")
@@ -683,12 +775,65 @@ def workers_page(request):
         property_obj,
         "can_manage_workers",
     )
+    can_import_workers = can_manage and PermissionService.user_can_module(request.user, tenant, "excel_import")
     area_options = list(Area.objects.filter(tenant=tenant, property=property_obj, active=True).order_by("name"))
 
     if request.method == "POST":
         if not can_manage:
             return HttpResponseForbidden("No tienes permisos para gestionar trabajadores.")
         action = str(request.POST.get("action", "")).strip()
+        if action == "preview_workers_inline":
+            if not can_import_workers:
+                messages.error(request, "No tienes permisos para importar trabajadores.")
+                return redirect("webui-workers")
+            if not request.POST.get("confirm_full_sync"):
+                messages.error(request, "Confirma que el archivo contiene la lista completa de trabajadores activos de la sede.")
+                return redirect("webui-workers")
+            uploaded_file = request.FILES.get("file")
+            if not uploaded_file:
+                messages.error(request, "Debes seleccionar un archivo CSV o XLSX.")
+                return redirect("webui-workers")
+            try:
+                batch = WorkerImportService.create_worker_preview(
+                    tenant=tenant,
+                    fallback_property=property_obj,
+                    file_name=uploaded_file.name,
+                    file_bytes=uploaded_file.read(),
+                    user=request.user,
+                    create_missing_areas=bool(request.POST.get("create_missing_areas")),
+                    sync_mode=True,
+                )
+            except ValueError as exc:
+                messages.error(request, str(exc))
+                return redirect("webui-workers")
+            messages.success(request, f"Vista previa creada. Revisa el lote #{batch.id}.")
+            return redirect(f"{reverse('webui-workers')}?import_batch_id={batch.id}&import_modal=1")
+
+        if action == "confirm_workers_import_inline":
+            if not can_import_workers:
+                messages.error(request, "No tienes permisos para confirmar importaciones de trabajadores.")
+                return redirect("webui-workers")
+            batch_id_raw = str(request.POST.get("batch_id", "")).strip()
+            batch = ImportBatch.objects.filter(
+                id=int(batch_id_raw) if batch_id_raw.isdigit() else 0,
+                tenant=tenant,
+                property=property_obj,
+                source_type="workers",
+                status="preview",
+            ).first()
+            if batch is None:
+                messages.error(request, "Lote no encontrado o ya aplicado.")
+                return redirect("webui-workers")
+            if _import_batch_has_errors(batch):
+                messages.error(request, "No se puede confirmar una importacion con errores bloqueantes.")
+                return redirect(f"{reverse('webui-workers')}?import_batch_id={batch.id}&import_modal=1")
+            if not request.POST.get("confirm_apply_sync"):
+                messages.error(request, "Confirma la aplicacion de la sincronizacion completa.")
+                return redirect(f"{reverse('webui-workers')}?import_batch_id={batch.id}&import_modal=1")
+            WorkerImportService.confirm_worker_import(batch=batch)
+            messages.success(request, f"Lote #{batch.id} confirmado. Trabajadores sincronizados.")
+            return redirect("webui-workers")
+
         if action in {"", "create_worker"}:
             form = WorkerForm(request.POST)
             form.fields["area"].queryset = Area.objects.filter(tenant=tenant, property=property_obj).order_by("name")
@@ -791,6 +936,16 @@ def workers_page(request):
 
     form = WorkerForm()
     form.fields["area"].queryset = Area.objects.filter(tenant=tenant, property=property_obj).order_by("name")
+    import_batch = None
+    import_batch_id = str(request.GET.get("import_batch_id", "")).strip()
+    if import_batch_id.isdigit():
+        import_batch = ImportBatch.objects.filter(
+            id=int(import_batch_id),
+            tenant=tenant,
+            property=property_obj,
+            source_type="workers",
+        ).first()
+    import_context = _build_import_batch_preview_context(import_batch, row_limit=50)
 
     return render(
         request,
@@ -802,6 +957,10 @@ def workers_page(request):
             "area_options": area_options,
             "status_filter": status_filter,
             "can_manage_workers": can_manage,
+            "can_import_workers": can_import_workers,
+            "import_batch": import_batch,
+            "import_modal_open": bool(import_batch and request.GET.get("import_modal")),
+            **import_context,
         },
     )
 
@@ -836,12 +995,65 @@ def shifts_page(request):
         property_obj,
         "can_manage_shifts",
     )
+    can_import_shifts = can_manage and PermissionService.user_can_module(request.user, tenant, "excel_import")
     area_options = list(Area.objects.filter(tenant=tenant, property=property_obj, active=True).order_by("name"))
 
     if request.method == "POST":
         if not can_manage:
             return HttpResponseForbidden("No tienes permisos para gestionar turnos.")
         action = str(request.POST.get("action", "")).strip()
+        if action == "preview_shifts_inline":
+            if not can_import_shifts:
+                messages.error(request, "No tienes permisos para importar turnos.")
+                return redirect("webui-shifts")
+            if not request.POST.get("confirm_full_sync"):
+                messages.error(request, "Confirma que el archivo contiene la lista completa de turnos activos de la sede.")
+                return redirect("webui-shifts")
+            uploaded_file = request.FILES.get("file")
+            if not uploaded_file:
+                messages.error(request, "Debes seleccionar un archivo CSV o XLSX.")
+                return redirect("webui-shifts")
+            try:
+                batch = ShiftAreaImportService.create_shift_preview(
+                    tenant=tenant,
+                    fallback_property=property_obj,
+                    file_name=uploaded_file.name,
+                    file_bytes=uploaded_file.read(),
+                    user=request.user,
+                    create_missing_areas=bool(request.POST.get("create_missing_areas")),
+                    sync_mode=True,
+                )
+            except ValueError as exc:
+                messages.error(request, str(exc))
+                return redirect("webui-shifts")
+            messages.success(request, f"Vista previa creada. Revisa el lote #{batch.id}.")
+            return redirect(f"{reverse('webui-shifts')}?import_batch_id={batch.id}&import_modal=1")
+
+        if action == "confirm_shifts_import_inline":
+            if not can_import_shifts:
+                messages.error(request, "No tienes permisos para confirmar importaciones de turnos.")
+                return redirect("webui-shifts")
+            batch_id_raw = str(request.POST.get("batch_id", "")).strip()
+            batch = ImportBatch.objects.filter(
+                id=int(batch_id_raw) if batch_id_raw.isdigit() else 0,
+                tenant=tenant,
+                property=property_obj,
+                source_type="shifts_area",
+                status="preview",
+            ).first()
+            if batch is None:
+                messages.error(request, "Lote no encontrado o ya aplicado.")
+                return redirect("webui-shifts")
+            if _import_batch_has_errors(batch):
+                messages.error(request, "No se puede confirmar una importacion con errores bloqueantes.")
+                return redirect(f"{reverse('webui-shifts')}?import_batch_id={batch.id}&import_modal=1")
+            if not request.POST.get("confirm_apply_sync"):
+                messages.error(request, "Confirma la aplicacion de la sincronizacion completa.")
+                return redirect(f"{reverse('webui-shifts')}?import_batch_id={batch.id}&import_modal=1")
+            ShiftAreaImportService.confirm_shift_import(batch=batch)
+            messages.success(request, f"Lote #{batch.id} confirmado. Turnos sincronizados.")
+            return redirect("webui-shifts")
+
         if action in {"", "create_shift"}:
             form = ShiftForm(request.POST)
             form.fields["area"].queryset = Area.objects.filter(tenant=tenant, property=property_obj).order_by("name")
@@ -928,6 +1140,16 @@ def shifts_page(request):
 
     form = ShiftForm()
     form.fields["area"].queryset = Area.objects.filter(tenant=tenant, property=property_obj).order_by("name")
+    import_batch = None
+    import_batch_id = str(request.GET.get("import_batch_id", "")).strip()
+    if import_batch_id.isdigit():
+        import_batch = ImportBatch.objects.filter(
+            id=int(import_batch_id),
+            tenant=tenant,
+            property=property_obj,
+            source_type="shifts_area",
+        ).first()
+    import_context = _build_import_batch_preview_context(import_batch, row_limit=50)
 
     return render(
         request,
@@ -939,6 +1161,10 @@ def shifts_page(request):
             "area_options": area_options,
             "status_filter": status_filter,
             "can_manage_shifts": can_manage,
+            "can_import_shifts": can_import_shifts,
+            "import_batch": import_batch,
+            "import_modal_open": bool(import_batch and request.GET.get("import_modal")),
+            **import_context,
         },
     )
 
@@ -1483,6 +1709,7 @@ def scheduling_page(request):
             is_night = False
             selected_shift_id = None
             selected_state_id = None
+            selected_value = ""
             if assignment:
                 if assignment.shift_id:
                     selected_value = f"shift:{assignment.shift_id}"
@@ -1924,16 +2151,41 @@ def scheduling_team_report_pdf(request):
 @login_required
 @require_http_methods(["POST"])
 def scheduling_assign(request):
+    wants_json = (
+        request.headers.get("x-requested-with") == "XMLHttpRequest"
+        or request.headers.get("accept", "").lower().find("application/json") >= 0
+    )
+
+    def json_error(message, status=400):
+        return JsonResponse({"ok": False, "message": message}, status=status)
+
+    def json_success(message, *, display_code="", is_empty=False, assignment_value=""):
+        return JsonResponse(
+            {
+                "ok": True,
+                "message": message,
+                "display_code": display_code or "",
+                "is_empty": bool(is_empty),
+                "assignment_value": assignment_value,
+            }
+        )
+
     ctx = _build_context(request, require_property=True)
     if ctx.get("context_error"):
+        if wants_json:
+            return json_error(ctx["context_error"], status=400)
         messages.error(request, ctx["context_error"])
         return redirect("webui-scheduling")
 
     tenant = ctx["selected_tenant"]
     property_obj = ctx["selected_property"]
     if not PermissionService.user_can_module(request.user, tenant, "scheduling"):
+        if wants_json:
+            return json_error("Modulo desactivado: scheduling.", status=403)
         return HttpResponseForbidden("Modulo desactivado: scheduling.")
     if not PermissionService.user_can_property_action(request.user, tenant, property_obj, "can_schedule"):
+        if wants_json:
+            return json_error("No tienes permisos para asignar en esta sede.", status=403)
         return HttpResponseForbidden("No tienes permisos para asignar en esta sede.")
 
     month_value = str(request.POST.get("month", "")).strip()
@@ -1947,12 +2199,16 @@ def scheduling_assign(request):
     redirect_url = _build_scheduling_redirect_url(month_value, area_value, worker_query, focus_date)
 
     if not worker_id or not work_date_raw:
+        if wants_json:
+            return json_error("Debe seleccionar trabajador y fecha.")
         messages.error(request, "Debe seleccionar trabajador y fecha.")
         return redirect(redirect_url)
 
     try:
         work_date = date.fromisoformat(work_date_raw)
     except ValueError:
+        if wants_json:
+            return json_error("Fecha invalida.")
         messages.error(request, "Fecha invalida.")
         return redirect(redirect_url)
 
@@ -1962,6 +2218,8 @@ def scheduling_assign(request):
         year=work_date.year,
         month=work_date.month,
     ):
+        if wants_json:
+            return json_error("El mes esta cerrado para esta sede.", status=409)
         messages.error(request, "El mes esta cerrado para esta sede.")
         return redirect(redirect_url)
 
@@ -1971,10 +2229,14 @@ def scheduling_assign(request):
         property=property_obj,
     ).first()
     if worker is None:
+        if wants_json:
+            return json_error("Trabajador no encontrado.", status=404)
         messages.error(request, "Trabajador no encontrado.")
         return redirect(redirect_url)
 
     if not PermissionService.user_can_area_schedule(request.user, tenant, property_obj, worker.area):
+        if wants_json:
+            return json_error("No tienes permisos para asignar en esta area.", status=403)
         return HttpResponseForbidden("No tienes permisos para asignar en esta area.")
 
     if assignment_value == "":
@@ -1985,6 +2247,8 @@ def scheduling_assign(request):
             date=work_date,
         ).select_related("shift", "special_state").first()
         if existing_assignment is None:
+            if wants_json:
+                return json_success("Celda sin asignacion.", display_code="", is_empty=True, assignment_value="")
             messages.info(request, "No habia asignacion para eliminar en esa fecha.")
             return redirect(redirect_url)
 
@@ -2006,6 +2270,8 @@ def scheduling_assign(request):
             before=before,
             after={},
         )
+        if wants_json:
+            return json_success("Asignacion eliminada.", display_code="", is_empty=True, assignment_value="")
         messages.success(request, "Asignacion eliminada.")
         return redirect(
             _build_scheduling_redirect_url(
@@ -2024,15 +2290,21 @@ def scheduling_assign(request):
         shift_id = assignment_value.split(":", 1)[1]
         shift = Shift.objects.filter(id=shift_id, tenant=tenant, property=property_obj, area=worker.area).first()
         if shift is None:
+            if wants_json:
+                return json_error("Turno invalido para esta area.")
             messages.error(request, "Turno invalido para esta area.")
             return redirect(redirect_url)
     elif assignment_value.startswith("state:"):
         state_id = assignment_value.split(":", 1)[1]
         special_state = SpecialState.objects.filter(id=state_id, tenant=tenant, property=property_obj).first()
         if special_state is None:
+            if wants_json:
+                return json_error("Estado especial invalido.")
             messages.error(request, "Estado especial invalido.")
             return redirect(redirect_url)
     else:
+        if wants_json:
+            return json_error("Seleccion invalida.")
         messages.error(request, "Seleccion invalida.")
         return redirect(redirect_url)
 
@@ -2045,6 +2317,21 @@ def scheduling_assign(request):
         special_state=special_state,
         user=request.user,
     )
+    if shift is not None:
+        if wants_json:
+            return json_success(
+                "Asignacion guardada.",
+                display_code=shift.buk_code,
+                is_empty=False,
+                assignment_value=f"shift:{shift.id}",
+            )
+    elif special_state is not None and wants_json:
+        return json_success(
+            "Asignacion guardada.",
+            display_code=special_state.buk_code or special_state.name,
+            is_empty=False,
+            assignment_value=f"state:{special_state.id}",
+        )
     messages.success(request, "Asignacion guardada.")
     return redirect(
         _build_scheduling_redirect_url(
@@ -2054,6 +2341,160 @@ def scheduling_assign(request):
             work_date.isoformat(),
             edited_worker_id=str(worker.id),
             edited_date=work_date.isoformat(),
+        )
+    )
+
+
+@login_required
+@require_http_methods(["POST"])
+def scheduling_copy_cell_range(request):
+    ctx = _build_context(request, require_property=True)
+    if ctx.get("context_error"):
+        messages.error(request, ctx["context_error"])
+        return redirect("webui-scheduling")
+
+    tenant = ctx["selected_tenant"]
+    property_obj = ctx["selected_property"]
+    if not PermissionService.user_can_module(request.user, tenant, "scheduling"):
+        return HttpResponseForbidden("Modulo desactivado: scheduling.")
+    if not PermissionService.user_can_property_action(request.user, tenant, property_obj, "can_schedule"):
+        return HttpResponseForbidden("No tienes permisos para asignar en esta sede.")
+
+    month_value = str(request.POST.get("month", "")).strip()
+    area_value = str(request.POST.get("area_id", "")).strip()
+    worker_query = str(request.POST.get("worker_q", "")).strip()
+    source_date_raw = str(request.POST.get("source_date", "")).strip()
+    date_from_raw = str(request.POST.get("date_from", "")).strip()
+    date_to_raw = str(request.POST.get("date_to", "")).strip()
+    source_worker_id = str(request.POST.get("source_worker_id", "")).strip()
+    assignment_value = str(request.POST.get("assignment_value", "")).strip()
+    redirect_url = _build_scheduling_redirect_url(month_value, area_value, worker_query, source_date_raw)
+
+    if not source_worker_id or not assignment_value:
+        messages.error(request, "Debe copiar desde una celda con turno o estado especial.")
+        return redirect(redirect_url)
+    try:
+        source_date = date.fromisoformat(source_date_raw)
+        date_from = date.fromisoformat(date_from_raw)
+        date_to = date.fromisoformat(date_to_raw)
+    except ValueError:
+        messages.error(request, "Rango de fechas invalido.")
+        return redirect(redirect_url)
+
+    if date_to < date_from:
+        messages.error(request, "La fecha final no puede ser menor que la fecha inicial.")
+        return redirect(redirect_url)
+    total_days = (date_to - date_from).days + 1
+    if total_days > 62:
+        messages.error(request, "El rango maximo para copiar es de 62 dias.")
+        return redirect(redirect_url)
+    if _is_any_month_closed(
+        tenant=tenant,
+        property_obj=property_obj,
+        start_date=date_from,
+        end_date=date_to,
+    ):
+        messages.error(request, "El rango destino incluye un mes cerrado para esta sede.")
+        return redirect(redirect_url)
+
+    worker = Worker.objects.select_related("area").filter(
+        id=source_worker_id,
+        tenant=tenant,
+        property=property_obj,
+        active=True,
+    ).first()
+    if worker is None:
+        messages.error(request, "Trabajador no encontrado o inactivo.")
+        return redirect(redirect_url)
+    if not PermissionService.user_can_area_schedule(request.user, tenant, property_obj, worker.area):
+        return HttpResponseForbidden("No tienes permisos para asignar en esta area.")
+
+    shifts_map = {
+        shift.id: shift
+        for shift in Shift.objects.filter(
+            tenant=tenant,
+            property=property_obj,
+            active=True,
+        ).select_related("area")
+    }
+    states_map = {
+        state.id: state
+        for state in SpecialState.objects.filter(
+            tenant=tenant,
+            property=property_obj,
+            active=True,
+        )
+    }
+    shift, special_state, error = _resolve_assignment_value_for_worker(
+        assignment_value=assignment_value,
+        worker=worker,
+        shifts_map=shifts_map,
+        states_map=states_map,
+    )
+    if error:
+        messages.error(request, "La asignacion origen ya no es valida para este trabajador.")
+        return redirect(redirect_url)
+
+    plans = {}
+    for offset in range(total_days):
+        target_date = date_from + timedelta(days=offset)
+        plans[(worker.id, target_date)] = {
+            "worker": worker,
+            "date": target_date,
+            "shift": shift,
+            "special_state": special_state,
+        }
+    impact = _summarize_assignment_plans(tenant=tenant, property_obj=property_obj, plans=plans)
+
+    with transaction.atomic():
+        copied = 0
+        for plan in plans.values():
+            ScheduleAssignmentService.upsert_assignment(
+                tenant=tenant,
+                property_obj=property_obj,
+                worker=plan["worker"],
+                date=plan["date"],
+                shift=plan["shift"],
+                special_state=plan["special_state"],
+                user=request.user,
+            )
+            copied += 1
+        AuditService.log(
+            tenant=tenant,
+            property_obj=property_obj,
+            user=request.user,
+            action="scheduling_copy_cell_range_apply",
+            entity_type="ScheduleAssignment",
+            entity_id=f"{worker.id}:{date_from.isoformat()}:{date_to.isoformat()}",
+            before={},
+            after={
+                "worker_id": worker.id,
+                "source_date": source_date.isoformat(),
+                "date_from": date_from.isoformat(),
+                "date_to": date_to.isoformat(),
+                "assignment_value": assignment_value,
+                "shift_id": shift.id if shift else None,
+                "special_state_id": special_state.id if special_state else None,
+                "copied": copied,
+                "impact": impact,
+            },
+        )
+
+    messages.success(
+        request,
+        (
+            f"Asignacion copiada a {copied} dias "
+            f"({impact['to_create']} nuevas, {impact['to_update']} actualizadas, {impact['unchanged']} sin cambios)."
+        ),
+    )
+    return redirect(
+        _build_scheduling_redirect_url(
+            month_value,
+            area_value,
+            worker_query,
+            date_from.isoformat(),
+            edited_worker_id=str(worker.id),
+            edited_date=date_from.isoformat(),
         )
     )
 
@@ -6398,6 +6839,9 @@ def imports_page(request):
             if not can_manage_workers:
                 messages.error(request, "No tienes permisos para importar trabajadores.")
                 return redirect("/app/imports/")
+            if not request.POST.get("confirm_full_sync"):
+                messages.error(request, "Confirma que el archivo contiene la lista completa de trabajadores de la sede.")
+                return redirect("/app/imports/")
             uploaded_file = request.FILES.get("file")
             if not uploaded_file:
                 messages.error(request, "Debes seleccionar un archivo CSV o XLSX.")
@@ -6410,6 +6854,7 @@ def imports_page(request):
                         file_bytes=uploaded_file.read(),
                         user=request.user,
                         create_missing_areas=bool(request.POST.get("create_missing_areas")),
+                        sync_mode=True,
                     )
                     messages.success(request, f"Vista previa creada. Lote #{batch.id}.")
                     return redirect(f"/app/imports/?batch_id={batch.id}")
@@ -6417,26 +6862,15 @@ def imports_page(request):
                     messages.error(request, str(exc))
 
         elif action == "preview_excel":
-            if not can_manage_workers:
-                messages.error(request, "No tienes permisos para importar desde Excel original.")
-                return redirect("/app/imports/")
-            uploaded_file = request.FILES.get("file")
-            if not uploaded_file:
-                messages.error(request, "Debes seleccionar un archivo XLSX.")
-            else:
-                batch = ExcelImportService.create_preview(
-                    tenant=tenant,
-                    property_obj=property_obj,
-                    file_name=uploaded_file.name,
-                    file_bytes=uploaded_file.read(),
-                    user=request.user,
-                )
-                messages.success(request, f"Vista previa Excel creada. Lote #{batch.id}.")
-                return redirect(f"/app/imports/?batch_id={batch.id}")
+            messages.error(request, "La importacion del Excel original ya no esta disponible desde la aplicacion.")
+            return redirect("/app/imports/")
 
         elif action == "preview_shifts_area":
             if not can_manage_shifts:
                 messages.error(request, "No tienes permisos para importar turnos.")
+                return redirect("/app/imports/")
+            if not request.POST.get("confirm_full_sync"):
+                messages.error(request, "Confirma que el archivo contiene la lista completa de turnos de la sede.")
                 return redirect("/app/imports/")
             uploaded_file = request.FILES.get("file")
             if not uploaded_file:
@@ -6450,6 +6884,7 @@ def imports_page(request):
                         file_bytes=uploaded_file.read(),
                         user=request.user,
                         create_missing_areas=bool(request.POST.get("create_missing_areas")),
+                        sync_mode=True,
                     )
                     messages.success(request, f"Vista previa de turnos creada. Lote #{batch.id}.")
                     return redirect(f"/app/imports/?batch_id={batch.id}")
@@ -6476,16 +6911,26 @@ def imports_page(request):
                 if batch.status != "preview":
                     messages.error(request, "El lote ya no esta en estado preview.")
                 else:
+                    if _import_batch_has_errors(batch):
+                        messages.error(request, "No se puede confirmar una importacion con errores bloqueantes.")
+                        return redirect(f"/app/imports/?batch_id={batch.id}")
+                    requires_sync_confirmation = batch.source_type in {"workers", "shifts_area"} and bool(
+                        batch.summary.get("sync_mode")
+                    )
+                    if requires_sync_confirmation and not request.POST.get("confirm_apply_sync"):
+                        messages.error(
+                            request,
+                            "Confirma la aplicacion de la sincronizacion completa antes de continuar.",
+                        )
+                        return redirect(f"/app/imports/?batch_id={batch.id}")
                     if batch.source_type == "workers":
                         if not can_manage_workers:
                             messages.error(request, "No tienes permisos para confirmar importaciones de trabajadores.")
                             return redirect(f"/app/imports/?batch_id={batch.id}")
                         batch = WorkerImportService.confirm_worker_import(batch=batch)
                     elif batch.source_type == "excel_original":
-                        if not can_manage_workers:
-                            messages.error(request, "No tienes permisos para confirmar importaciones Excel.")
-                            return redirect(f"/app/imports/?batch_id={batch.id}")
-                        batch = ExcelImportApplyService.apply_preview_batch(batch=batch)
+                        messages.error(request, "La importacion del Excel original ya no esta disponible.")
+                        return redirect(f"/app/imports/?batch_id={batch.id}")
                     elif batch.source_type == "shifts_area":
                         if not can_manage_shifts:
                             messages.error(request, "No tienes permisos para confirmar importaciones de turnos.")
@@ -6530,64 +6975,13 @@ def imports_page(request):
     batch_id = request.GET.get("batch_id")
     if batch_id and str(batch_id).isdigit():
         selected_batch = next((item for item in batches if item.id == int(batch_id)), None)
-    if selected_batch is None and batches:
-        selected_batch = batches[0]
 
-    preview_rows = []
-    selected_batch_summary_rows = []
     selected_batch_source_label = ""
     selected_batch_status_label = ""
     if selected_batch:
         selected_batch_source_label = source_labels.get(selected_batch.source_type, selected_batch.source_type)
         selected_batch_status_label = status_labels.get(selected_batch.status, selected_batch.status)
-        summary_data = selected_batch.summary if isinstance(selected_batch.summary, dict) else {}
-        for raw_key, raw_value in summary_data.items():
-            key_label = str(raw_key).replace("_", " ").capitalize()
-            normalized_value = _normalize_import_preview_value(raw_value)
-            if isinstance(normalized_value, dict):
-                selected_batch_summary_rows.append(
-                    {
-                        "key": key_label,
-                        "is_block": False,
-                        "items": [
-                            {
-                                "subkey": str(subkey).replace("_", " "),
-                                "subvalue": _format_import_preview_value(subvalue),
-                            }
-                            for subkey, subvalue in normalized_value.items()
-                        ],
-                        "value": "",
-                    }
-                )
-            elif isinstance(normalized_value, list):
-                selected_batch_summary_rows.append(
-                    {
-                        "key": key_label,
-                        "is_block": True,
-                        "items": [],
-                        "value": _format_import_preview_value(normalized_value),
-                    }
-                )
-            else:
-                selected_batch_summary_rows.append(
-                    {
-                        "key": key_label,
-                        "is_block": False,
-                        "items": [],
-                        "value": _format_import_preview_value(normalized_value),
-                    }
-                )
-        preview_rows = [
-            {
-                "sheet_name": item.sheet_name,
-                "row_number": item.row_number,
-                "status": item.status,
-                "action": item.action,
-                "message": item.message,
-                "payload_pretty": _format_import_preview_value(item.payload),
-            }
-            for item in selected_batch.preview_rows.order_by("sheet_name", "row_number")[:300]
-        ]
+    import_context = _build_import_batch_preview_context(selected_batch, row_limit=50)
 
     return render(
         request,
@@ -6599,8 +6993,9 @@ def imports_page(request):
             "selected_batch": selected_batch,
             "selected_batch_source_label": selected_batch_source_label,
             "selected_batch_status_label": selected_batch_status_label,
-            "selected_batch_summary_rows": selected_batch_summary_rows,
-            "preview_rows": preview_rows,
+            "import_batch": selected_batch,
+            "import_modal_open": bool(selected_batch and batch_id),
+            **import_context,
             "can_import_workers": can_manage_workers,
             "can_import_shifts": can_manage_shifts,
         },
@@ -6632,7 +7027,7 @@ def workers_template_download(request):
     ws.cell(2, 1, "12345678")
     ws.cell(2, 2, "Nombre")
     ws.cell(2, 3, "Apellido")
-    ws.cell(2, 4, "Recepcion")
+    ws.cell(2, 4, "Recepción")
     ws.cell(2, 5, property_obj.name)
 
     ws.column_dimensions["A"].width = 14
@@ -6683,7 +7078,7 @@ def shifts_template_download(request):
     for col, value in enumerate(headers, start=1):
         ws.cell(1, col, value)
 
-    ws.cell(2, 1, "Recepcion")
+    ws.cell(2, 1, "Recepción")
     ws.cell(2, 2, "REC-M")
     ws.cell(2, 3, "REC-M")
     ws.cell(2, 4, "06:00")
@@ -7884,10 +8279,10 @@ def users_permissions_page(request):
                 role = role_profile.base_role
 
             if not email or not role:
-                messages.error(request, "Email y rol son obligatorios.")
+                messages.error(request, "Email y tipo de usuario son obligatorios.")
                 return redirect("webui-users-permissions")
             if role not in {"admin", "operator", "supervisor"}:
-                messages.error(request, "Rol invalido.")
+                messages.error(request, "Tipo de usuario invalido.")
                 return redirect("webui-users-permissions")
 
             user, created = User.objects.get_or_create(
@@ -7949,6 +8344,11 @@ def users_permissions_page(request):
                 messages.error(request, "Usuario no encontrado.")
                 return redirect("webui-users-permissions")
 
+            before_user = _audit_snapshot(target_user, ["email", "first_name", "last_name", "is_active", "is_super_admin"])
+            target_user.first_name = str(request.POST.get("first_name", "")).strip()
+            target_user.last_name = str(request.POST.get("last_name", "")).strip()
+            target_user.save(update_fields=["first_name", "last_name", "updated_at"])
+
             role = str(request.POST.get("role", "")).strip()
             role_profile = _get_role_profile_from_request(request, tenant)
             if role_profile is not None:
@@ -7981,7 +8381,62 @@ def users_permissions_page(request):
                     area=area,
                     defaults={"can_view": True, "can_schedule": True},
                 )
+            AuditService.log(
+                tenant=tenant,
+                property_obj=property_obj,
+                user=request.user,
+                action="update",
+                entity_type="User",
+                entity_id=target_user.id,
+                before=before_user,
+                after=_audit_snapshot(target_user, ["email", "first_name", "last_name", "is_active", "is_super_admin"]),
+            )
             messages.success(request, "Permisos actualizados.")
+            return redirect("webui-users-permissions")
+
+        if action == "reset_user_password":
+            user_id = str(request.POST.get("user_id", "")).strip()
+            new_password = str(request.POST.get("new_password", "")).strip()
+            confirm_password = str(request.POST.get("confirm_password", "")).strip()
+            if not user_id.isdigit():
+                messages.error(request, "Usuario invalido.")
+                return redirect("webui-users-permissions")
+            target_user = User.objects.filter(id=int(user_id)).first()
+            if target_user is None:
+                messages.error(request, "Usuario no encontrado.")
+                return redirect("webui-users-permissions")
+            if target_user.is_super_admin:
+                messages.error(request, "No se puede restablecer la clave de un Super Administrador desde esta pantalla.")
+                return redirect("webui-users-permissions")
+            if not target_user.is_active:
+                messages.error(request, "No se puede restablecer la clave de una cuenta inactiva.")
+                return redirect("webui-users-permissions")
+            if not new_password or new_password != confirm_password:
+                messages.error(request, "La nueva contrasena y la confirmacion deben coincidir.")
+                return redirect("webui-users-permissions")
+            try:
+                validate_password(new_password, target_user)
+            except ValidationError as exc:
+                messages.error(request, " ".join(exc.messages))
+                return redirect("webui-users-permissions")
+
+            before = {"email": target_user.email, "password_reset": False}
+            target_user.set_password(new_password)
+            target_user.save(update_fields=["password", "updated_at"])
+            AuditService.log(
+                tenant=tenant,
+                property_obj=property_obj,
+                user=request.user,
+                action="password_reset",
+                entity_type="User",
+                entity_id=target_user.id,
+                before=before,
+                after={"email": target_user.email, "password_reset": True, "reset_by_user_id": request.user.id},
+            )
+            messages.success(
+                request,
+                "Contrasena restablecida. Entrega la nueva clave al usuario por un canal seguro.",
+            )
             return redirect("webui-users-permissions")
 
         if action == "deactivate_user":
@@ -8021,7 +8476,7 @@ def users_permissions_page(request):
     areas = list(Area.objects.filter(tenant=tenant, property=property_obj, active=True).order_by("name"))
     role_map = {
         item.user_id: item
-        for item in UserTenantRole.objects.filter(tenant=tenant).select_related("user")
+        for item in UserTenantRole.objects.filter(tenant=tenant).select_related("user", "role_profile")
     }
     prop_perms = list(
         UserPropertyPermission.objects.filter(tenant=tenant, property=property_obj).select_related("user")
@@ -8036,10 +8491,14 @@ def users_permissions_page(request):
     rows = []
     for perm in prop_perms:
         tenant_role = role_map.get(perm.user_id)
+        role_profile_name = tenant_role.role_profile.name if tenant_role and tenant_role.role_profile_id else ""
+        role_label = dict(RoleChoices.choices).get(tenant_role.role, tenant_role.role) if tenant_role else ""
         rows.append(
             {
                 "user": perm.user,
                 "role": tenant_role.role if tenant_role else "",
+                "role_label": role_label,
+                "role_profile_name": role_profile_name,
                 "role_profile_id": tenant_role.role_profile_id if tenant_role else None,
                 "permission": perm,
                 "selected_area_ids": area_map.get(perm.user_id, set()),

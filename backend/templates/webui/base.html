@@ -32,6 +32,12 @@
     .main { padding: 16px; }
     .topbar { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
     .topbar form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 0; }
+    .topbar-context-form { flex: 1 1 auto; min-width: min(100%, 520px); }
+    .topbar-user-actions { display: flex; gap: 10px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+    .topbar-logout-form { flex: 0 0 auto; }
+    .topbar-user { display: grid; gap: 2px; justify-items: end; line-height: 1.2; }
+    .topbar-user-label { font-size: 11px; color: var(--muted); }
+    .topbar-user-name { font-size: 13px; font-weight: 700; color: var(--ink); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; }
     select, input[type="text"], input[type="date"], input[type="email"], input[type="password"], input[type="time"], input[type="number"], input[type="file"] {
       border: 1px solid var(--line); border-radius: 6px; padding: 8px; min-width: 140px; background: #fff;
@@ -105,8 +111,11 @@
     @media (max-width: 640px) {
       .main { padding: 10px; }
       .topbar { align-items: stretch; }
-      .topbar form { width: 100%; display: grid; grid-template-columns: 1fr; }
-      .topbar form > div,
+      .topbar-context-form { width: 100%; display: grid; grid-template-columns: 1fr; }
+      .topbar-user-actions { width: 100%; align-items: stretch; }
+      .topbar-user { justify-items: start; flex: 1 1 100%; }
+      .topbar-user-name { max-width: 100%; }
+      .topbar-context-form > div,
       .topbar button,
       select,
       input[type="text"],
@@ -155,7 +164,7 @@
     </aside>
     <main class="main">
       <div class="topbar">
-        <form method="post" action="/app/context/">
+        <form method="post" action="/app/context/" class="topbar-context-form">
           {% csrf_token %}
           <input type="hidden" name="next" value="{{ request.path }}">
           <div>
@@ -191,10 +200,22 @@
             <button class="primary" type="submit">Aplicar</button>
           </div>
         </form>
-        <form method="post" action="/app/logout/">
-          {% csrf_token %}
-          <button type="submit">Salir</button>
-        </form>
+        <div class="topbar-user-actions">
+          <div class="topbar-user" title="{{ user.email }}">
+            <span class="topbar-user-label">Usuario</span>
+            <span class="topbar-user-name">
+              {% if user.first_name or user.last_name %}
+                {{ user.first_name }} {{ user.last_name }}
+              {% else %}
+                {{ user.email }}
+              {% endif %}
+            </span>
+          </div>
+          <form method="post" action="/app/logout/" class="topbar-logout-form">
+            {% csrf_token %}
+            <button type="submit">Salir</button>
+          </form>
+        </div>
       </div>
 
       {% if messages %}

@@ -1,0 +1,135 @@
+{% if import_batch %}
+  <dialog class="modal-dialog" id="{{ import_modal_id|default:'import-preview-modal' }}">
+    <div class="modal-header">
+      <h3>{{ import_title|default:"Vista previa de importacion" }}</h3>
+      <button class="modal-close" type="button" data-close-modal>&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="compact-note" style="margin-top:0;">
+        Lote #{{ import_batch.id }} | Archivo: {{ import_batch.file_name }} | Estado: {{ import_batch.status }}
+      </p>
+      {% if import_batch.summary.sync_mode %}
+        <div class="msg msg-warning" style="margin-top:0;">
+          Esta vista previa sincroniza la sede completa. Revisa los registros que se crearan, actualizaran o quedaran inactivos antes de confirmar.
+        </div>
+      {% endif %}
+      {% if preview_blocking_errors %}
+        <div class="msg msg-error" style="margin-top:0;">
+          Hay errores bloqueantes. Corrige el archivo y vuelve a generar la vista previa antes de confirmar.
+        </div>
+      {% endif %}
+      {% if preview_issue_rows %}
+        <section style="border:1px solid #e5e7eb; border-radius:6px; padding:10px; margin-bottom:12px;">
+          <h4 style="margin:0 0 8px 0;">Problemas detectados</h4>
+          <div style="display:grid; gap:6px;">
+            {% for issue in preview_issue_rows %}
+              <div class="{% if issue.status == 'error' %}error{% else %}compact-note{% endif %}" style="margin:0;">
+                <strong>Fila {{ issue.row_number }}</strong> | {{ issue.status }} | {{ issue.action }}: {{ issue.message }}
+              </div>
+            {% endfor %}
+          </div>
+          {% if preview_total_rows > preview_issue_rows|length %}
+            <p class="compact-note" style="margin:8px 0 0 0;">Abre el detalle de filas para revisar el resto de cambios.</p>
+          {% endif %}
+        </section>
+      {% endif %}
+
+      <div class="grid-2" style="gap:8px; margin-bottom:12px;">
+        {% for item in selected_batch_summary_rows %}
+          <div style="border:1px solid #e5e7eb; border-radius:6px; padding:8px;">
+            <div class="muted" style="text-transform:capitalize;">{{ item.key }}</div>
+            <div style="margin-top:4px; font-size:13px; word-break:break-word;">
+              {% if item.items %}
+                {% for kv in item.items %}
+                  <div><strong>{{ kv.subkey }}</strong>: {{ kv.subvalue }}</div>
+                {% endfor %}
+              {% elif item.is_block %}
+                <details>
+                  <summary>Ver detalle</summary>
+                  <pre style="white-space:pre-wrap; margin:6px 0 0 0; font-size:11px;">{{ item.value }}</pre>
+                </details>
+              {% else %}
+                {{ item.value }}
+              {% endif %}
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+
+      <details>
+        <summary style="cursor:pointer; font-weight:700;">
+          Ver detalle de filas{% if preview_total_rows %} ({{ preview_rows|length }} de {{ preview_total_rows }}){% endif %}
+        </summary>
+        <div style="overflow:auto; margin-top:10px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Fila</th>
+                <th>Estado</th>
+                <th>Accion</th>
+                <th>Mensaje</th>
+                <th>Detalle</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in preview_rows %}
+                <tr>
+                  <td>{{ row.row_number }}</td>
+                  <td>{{ row.status }}</td>
+                  <td>{{ row.action }}</td>
+                  <td>{{ row.message|default:"-" }}</td>
+                  <td>
+                    <details>
+                      <summary>Ver</summary>
+                      <pre style="white-space:pre-wrap; margin:6px 0 0 0; font-size:11px;">{{ row.payload_pretty }}</pre>
+                    </details>
+                  </td>
+                </tr>
+              {% empty %}
+                <tr><td colspan="5" class="muted">Sin filas de vista previa.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% if preview_has_more_rows %}
+          <p class="compact-note">Se muestran las primeras filas. El lote completo se aplicara al confirmar.</p>
+        {% endif %}
+      </details>
+
+      <div class="modal-actions" style="margin-top:12px;">
+        <button type="button" data-close-modal>Cerrar</button>
+        {% if import_batch.status == "preview" %}
+          <form method="post" action="{{ import_form_action|default:request.path }}" style="display:grid; gap:8px; flex:1;">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="{{ import_confirm_action|default:'confirm_batch' }}">
+            <input type="hidden" name="batch_id" value="{{ import_batch.id }}">
+            {% if import_batch.summary.sync_mode %}
+              <label style="display:flex; gap:8px; align-items:flex-start; margin:0;">
+                <input type="checkbox" name="confirm_apply_sync" value="1" required {% if preview_blocking_errors %}disabled{% endif %}>
+                <span>Confirmo que revise la vista previa y acepto aplicar la sincronizacion completa.</span>
+              </label>
+            {% endif %}
+            <button class="primary" type="submit" {% if preview_blocking_errors %}disabled title="Corrige los errores antes de confirmar"{% endif %}>
+              Confirmar importacion
+            </button>
+            {% if preview_blocking_errors %}
+              <p class="error" style="margin:0;">El boton esta deshabilitado porque hay errores bloqueantes.</p>
+            {% endif %}
+          </form>
+        {% else %}
+          <p class="compact-note" style="margin:0;">Este lote ya no esta pendiente de confirmacion.</p>
+        {% endif %}
+      </div>
+    </div>
+  </dialog>
+  {% if import_modal_open %}
+    <script>
+      document.addEventListener("DOMContentLoaded", function () {
+        var modal = document.getElementById("{{ import_modal_id|default:'import-preview-modal' }}");
+        if (modal && typeof modal.showModal === "function" && !modal.open) {
+          modal.showModal();
+        }
+      });
+    </script>
+  {% endif %}
+{% endif %}

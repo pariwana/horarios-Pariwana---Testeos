@@ -278,7 +278,7 @@ class SeedDemoUsersCommandTests(TestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(name="Pariwana Hostels", slug="pariwana-hostels")
         self.property = Property.objects.create(tenant=self.tenant, name="Pariwana Cusco", slug="pariwana-cusco")
-        self.area_1 = Area.objects.create(tenant=self.tenant, property=self.property, name="Recepcion")
+        self.area_1 = Area.objects.create(tenant=self.tenant, property=self.property, name="Recepción")
         self.area_2 = Area.objects.create(tenant=self.tenant, property=self.property, name="Housekeeping")
         self.area_3 = Area.objects.create(tenant=self.tenant, property=self.property, name="Bar")
 
@@ -286,13 +286,14 @@ class SeedDemoUsersCommandTests(TestCase):
         call_command(
             "seed_demo_users",
             password="StrongPass123",
-            supervisor_areas="Recepcion,Housekeeping",
+            supervisor_areas="Recepción,Housekeeping",
         )
 
         admin = User.objects.get(email="admin.demo@pariwana.local")
         operator = User.objects.get(email="operador.demo@pariwana.local")
         supervisor = User.objects.get(email="supervisor.demo@pariwana.local")
 
+        self.assertTrue(admin.is_super_admin)
         self.assertTrue(UserTenantRole.objects.filter(user=admin, tenant=self.tenant, role=RoleChoices.ADMIN).exists())
         self.assertTrue(
             UserPropertyPermission.objects.filter(
@@ -336,7 +337,7 @@ class ValidateDemoSetupCommandTests(TestCase):
             "bootstrap_local_demo",
             password="StrongPass123",
             days=7,
-            supervisor_areas="Recepcion,Housekeeping",
+            supervisor_areas="Recepción,Housekeeping",
         )
         call_command("validate_demo_setup")
 
@@ -345,7 +346,7 @@ class ValidateDemoSetupCommandTests(TestCase):
             "bootstrap_local_demo",
             password="StrongPass123",
             days=5,
-            supervisor_areas="Recepcion,Housekeeping",
+            supervisor_areas="Recepción,Housekeeping",
         )
         User.objects.filter(email="supervisor.demo@pariwana.local").delete()
         with self.assertRaises(CommandError):

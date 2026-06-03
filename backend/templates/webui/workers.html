@@ -8,7 +8,9 @@
     </div>
     {% if can_manage_workers %}
       <div class="page-actions">
-        <a class="button" href="/app/imports/">Importar XLSX</a>
+        {% if can_import_workers %}
+          <button type="button" data-open-modal="worker-import-modal">Importar XLSX</button>
+        {% endif %}
         <a class="button" href="/app/imports/workers-template/">Descargar plantilla</a>
         <button class="primary" type="button" data-open-modal="worker-create-modal">+ Nuevo trabajador</button>
       </div>
@@ -100,6 +102,42 @@
   </section>
 
   {% if can_manage_workers %}
+    {% if can_import_workers %}
+      <dialog class="modal-dialog" id="worker-import-modal">
+        <div class="modal-header">
+          <h3>Importar trabajadores</h3>
+          <button class="modal-close" type="button" data-close-modal>&times;</button>
+        </div>
+        <div class="modal-body">
+          <div class="msg msg-warning" style="margin-top:0;">
+            El archivo debe contener todos los trabajadores activos de la sede seleccionada. Quienes no aparezcan quedaran inactivos al confirmar.
+          </div>
+          <form method="post" enctype="multipart/form-data" class="stack">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="preview_workers_inline">
+            <div>
+              <label>Archivo XLSX o CSV</label>
+              <input type="file" name="file" accept=".csv,.xlsx" required>
+            </div>
+            <label style="display:flex; gap:8px; align-items:center; margin:0;">
+              <input type="checkbox" name="create_missing_areas" value="1">
+              Crear areas faltantes automaticamente
+            </label>
+            <label style="display:flex; gap:8px; align-items:flex-start; margin:0;">
+              <input type="checkbox" name="confirm_full_sync" value="1" required>
+              <span>Confirmo que este archivo contiene la lista completa de trabajadores activos de la sede seleccionada.</span>
+            </label>
+            <div class="modal-actions">
+              <button type="button" data-close-modal>Cancelar</button>
+              <button class="primary" type="submit">Generar vista previa</button>
+            </div>
+          </form>
+        </div>
+      </dialog>
+
+      {% include "webui/_import_preview_modal.html" with import_modal_id="worker-import-preview-modal" import_title="Vista previa de trabajadores" import_confirm_action="confirm_workers_import_inline" %}
+    {% endif %}
+
     <dialog class="modal-dialog" id="worker-create-modal">
       <div class="modal-header">
         <h3>Nuevo trabajador</h3>

@@ -5,6 +5,7 @@ from io import BytesIO, StringIO
 import unicodedata
 
 from openpyxl import Workbook, load_workbook
+from django.db import transaction
 
 from apps.audit.services import AuditService
 from apps.imports.models import ImportBatch, ImportPreviewRow
@@ -522,6 +523,7 @@ class WorkerImportService:
         file_bytes,
         user,
         create_missing_areas=False,
+        sync_mode=False,
     ):
         headers, rows = WorkerImportService._read_worker_rows(file_name, file_bytes)
         missing = WorkerImportService.REQUIRED_COLUMNS - set(headers)
@@ -543,12 +545,17 @@ class WorkerImportService:
             "detected_rows": len(rows),
             "created": 0,
             "updated": 0,
+            "unchanged": 0,
+            "to_deactivate": 0,
             "skipped": 0,
             "errors": 0,
             "new_areas": 0,
             "unknown_properties": 0,
+            "mismatched_properties": 0,
             "warnings": 0,
+            "sync_mode": bool(sync_mode),
         }
+        incoming_documents_by_property = defaultdict(set)
 
         for row_index, row in enumerate(rows, start=2):
             document = WorkerImportService.normalize_document(row.get("dni"))
@@ -576,6 +583,10 @@ class WorkerImportService:
                     status = "error"
                     message = f"unknown property: {property_name}"
                     summary["unknown_properties"] += 1
+                elif property_obj.id != fallback_property.id:
+                    status = "error"
+                    message = f"sede no coincide con la sede seleccionada: {property_name}"
+                    summary["mismatched_properties"] += 1
 
             if status == "ok":
                 area_obj = Area.objects.filter(
@@ -591,15 +602,36 @@ class WorkerImportService:
                     summary["new_areas"] += 1
 
             if status == "ok":
+                incoming_documents_by_property[property_obj.id].add(document)
                 exists = Worker.objects.filter(
                     tenant=tenant,
                     property=property_obj,
                     document_number=document,
-                ).exists()
-                action = "update" if exists else "create"
+                ).select_related("area").first()
                 if exists:
-                    summary["updated"] += 1
+                    changes = {}
+                    if exists.first_name != first_name:
+                        changes["first_name"] = {"from": exists.first_name, "to": first_name}
+                    if exists.last_name != last_name:
+                        changes["last_name"] = {"from": exists.last_name, "to": last_name}
+                    if exists.area_id != (area_obj.id if area_obj else None):
+                        changes["area"] = {
+                            "from": exists.area.name if exists.area_id else "",
+                            "to": area_name,
+                        }
+                    if not exists.active:
+                        changes["active"] = {"from": False, "to": True}
+                    if changes:
+                        action = "update"
+                        status = "warning"
+                        message = "Cambios detectados; revisa antes de confirmar."
+                        summary["updated"] += 1
+                        summary["warnings"] += 1
+                    else:
+                        action = "keep"
+                        summary["unchanged"] += 1
                 else:
+                    action = "create"
                     summary["created"] += 1
             else:
                 summary["errors"] += 1
@@ -618,8 +650,39 @@ class WorkerImportService:
                     "area_name": area_name,
                     "property_name": property_name,
                     "property_id": property_obj.id if property_obj else None,
+                    "changes": changes if status == "warning" and action == "update" else {},
                 },
             )
+
+        if sync_mode:
+            incoming_documents = incoming_documents_by_property.get(fallback_property.id, set())
+            active_missing_workers = Worker.objects.filter(
+                tenant=tenant,
+                property=fallback_property,
+                active=True,
+            ).exclude(document_number__in=incoming_documents)
+            next_row_number = 100000
+            for worker in active_missing_workers.select_related("area").order_by("last_name", "first_name", "id"):
+                summary["to_deactivate"] += 1
+                summary["warnings"] += 1
+                ImportPreviewRow.objects.create(
+                    batch=batch,
+                    sheet_name="workers_import",
+                    row_number=next_row_number,
+                    action="deactivate",
+                    status="warning",
+                    message="No aparece en el archivo completo de la sede; se marcara como inactivo.",
+                    payload={
+                        "worker_id": worker.id,
+                        "document_number": worker.document_number,
+                        "first_name": worker.first_name,
+                        "last_name": worker.last_name,
+                        "area_name": worker.area.name if worker.area_id else "",
+                        "property_name": fallback_property.name,
+                        "property_id": fallback_property.id,
+                    },
+                )
+                next_row_number += 1
 
         batch.summary = summary
         batch.save(update_fields=["summary", "updated_at"])
@@ -629,63 +692,100 @@ class WorkerImportService:
     def confirm_worker_import(*, batch):
         created = 0
         updated = 0
+        unchanged = 0
+        deactivated = 0
         new_areas = 0
         actor = batch.created_by
-        rows = batch.preview_rows.filter(status="ok").order_by("row_number")
-        for row in rows:
-            payload = row.payload
-            property_id = payload.get("property_id")
-            if not property_id:
-                continue
-            area, area_created = Area.objects.get_or_create(
-                tenant=batch.tenant,
-                property_id=property_id,
-                name=payload["area_name"],
-                defaults={"type": "", "active": True},
-            )
-            if area_created:
-                new_areas += 1
-            worker, worker_created = Worker.objects.update_or_create(
-                tenant=batch.tenant,
-                property_id=property_id,
-                document_number=payload["document_number"],
-                defaults={
-                    "first_name": payload["first_name"],
-                    "last_name": payload["last_name"],
-                    "area": area,
-                    "active": True,
-                },
-            )
-            if worker_created:
-                created += 1
-                if actor:
-                    AuditService.log(
+        rows = batch.preview_rows.filter(status__in=["ok", "warning"]).order_by("row_number")
+        with transaction.atomic():
+            for row in rows:
+                payload = row.payload
+                if row.action == "deactivate":
+                    worker_id = payload.get("worker_id")
+                    worker = Worker.objects.filter(
                         tenant=batch.tenant,
-                        property_obj=worker.property,
-                        user=actor,
-                        action="worker_create_from_import",
-                        entity_type="Worker",
-                        entity_id=worker.id,
-                        before={},
-                        after={"document_number": worker.document_number},
-                    )
-            else:
-                updated += 1
-                if actor:
-                    AuditService.log(
-                        tenant=batch.tenant,
-                        property_obj=worker.property,
-                        user=actor,
-                        action="worker_update_from_import",
-                        entity_type="Worker",
-                        entity_id=worker.id,
-                        before={},
-                        after={"document_number": worker.document_number},
-                    )
+                        property=batch.property,
+                        id=worker_id,
+                        active=True,
+                    ).first()
+                    if worker is None:
+                        continue
+                    before = {
+                        "document_number": worker.document_number,
+                        "active": worker.active,
+                    }
+                    worker.active = False
+                    worker.save(update_fields=["active", "updated_at"])
+                    deactivated += 1
+                    if actor:
+                        AuditService.log(
+                            tenant=batch.tenant,
+                            property_obj=worker.property,
+                            user=actor,
+                            action="worker_deactivate_from_import_sync",
+                            entity_type="Worker",
+                            entity_id=worker.id,
+                            before=before,
+                            after={"document_number": worker.document_number, "active": worker.active},
+                        )
+                    continue
+                if row.action == "keep":
+                    unchanged += 1
+                    continue
+                property_id = payload.get("property_id")
+                if not property_id:
+                    continue
+                area, area_created = Area.objects.get_or_create(
+                    tenant=batch.tenant,
+                    property_id=property_id,
+                    name=payload["area_name"],
+                    defaults={"type": "", "active": True},
+                )
+                if area_created:
+                    new_areas += 1
+                worker, worker_created = Worker.objects.update_or_create(
+                    tenant=batch.tenant,
+                    property_id=property_id,
+                    document_number=payload["document_number"],
+                    defaults={
+                        "first_name": payload["first_name"],
+                        "last_name": payload["last_name"],
+                        "area": area,
+                        "active": True,
+                    },
+                )
+                if worker_created:
+                    created += 1
+                    if actor:
+                        AuditService.log(
+                            tenant=batch.tenant,
+                            property_obj=worker.property,
+                            user=actor,
+                            action="worker_create_from_import",
+                            entity_type="Worker",
+                            entity_id=worker.id,
+                            before={},
+                            after={"document_number": worker.document_number},
+                        )
+                else:
+                    updated += 1
+                    if actor:
+                        AuditService.log(
+                            tenant=batch.tenant,
+                            property_obj=worker.property,
+                            user=actor,
+                            action="worker_update_from_import",
+                            entity_type="Worker",
+                            entity_id=worker.id,
+                            before={},
+                            after={"document_number": worker.document_number},
+                        )
         batch.summary = {
             **batch.summary,
             "applied_created": created,
             "applied_updated": updated,
+            "applied_unchanged": unchanged,
+            "applied_deactivated": deactivated,
             "applied_new_areas": new_areas,
         }
         batch.status = "confirmed"
@@ -785,6 +885,7 @@ class ShiftAreaImportService:
         file_bytes,
         user,
         create_missing_areas=False,
+        sync_mode=False,
     ):
         headers, rows = ShiftAreaImportService._read_rows(file_name, file_bytes)
         missing = ShiftAreaImportService.REQUIRED_COLUMNS - set(headers)
@@ -806,11 +907,17 @@ class ShiftAreaImportService:
             "detected_rows": len(rows),
             "created": 0,
             "updated": 0,
+            "unchanged": 0,
+            "to_deactivate": 0,
             "skipped": 0,
             "errors": 0,
             "new_areas": 0,
             "unknown_properties": 0,
+            "mismatched_properties": 0,
+            "warnings": 0,
+            "sync_mode": bool(sync_mode),
         }
+        matched_shift_ids_by_property = defaultdict(set)
 
         for row_index, row in enumerate(rows, start=2):
             area_name = str(row.get("area") or "").strip()
@@ -843,6 +950,10 @@ class ShiftAreaImportService:
                     status = "error"
                     message = f"unknown property: {property_name}"
                     summary["unknown_properties"] += 1
+                elif property_obj.id != fallback_property.id:
+                    status = "error"
+                    message = f"sede no coincide con la sede seleccionada: {property_name}"
+                    summary["mismatched_properties"] += 1
 
             if status == "ok":
                 area_obj = Area.objects.filter(
@@ -862,22 +973,69 @@ class ShiftAreaImportService:
                     tenant=tenant,
                     property=property_obj,
                     buk_code__iexact=buk_code,
-                ).first()
+                ).select_related("area").first()
                 if existing is None:
                     existing = Shift.objects.filter(
                         tenant=tenant,
                         property=property_obj,
                         area__name__iexact=area_name,
                         name__iexact=shift_name,
-                    ).first()
-                action = "update" if existing else "create"
+                    ).select_related("area").first()
                 if existing:
-                    summary["updated"] += 1
+                    matched_shift_ids_by_property[property_obj.id].add(existing.id)
+                    parsed_night = ShiftAreaImportService._parse_bool(night_flag_raw, default=None)
+                    effective_night = parsed_night if parsed_night is not None else end_time <= start_time
+                    effective_active = ShiftAreaImportService._parse_bool(active_raw, default=True)
+                    changes = {}
+                    if existing.area_id != (area_obj.id if area_obj else None):
+                        changes["area"] = {
+                            "from": existing.area.name if existing.area_id else "",
+                            "to": area_name,
+                        }
+                    if existing.name != shift_name:
+                        changes["name"] = {"from": existing.name, "to": shift_name}
+                    if existing.buk_code != buk_code:
+                        changes["buk_code"] = {"from": existing.buk_code, "to": buk_code}
+                    if existing.start_time != start_time:
+                        changes["start_time"] = {
+                            "from": ExcelImportService._serialize_time(existing.start_time),
+                            "to": ExcelImportService._serialize_time(start_time),
+                        }
+                    if existing.end_time != end_time:
+                        changes["end_time"] = {
+                            "from": ExcelImportService._serialize_time(existing.end_time),
+                            "to": ExcelImportService._serialize_time(end_time),
+                        }
+                    if existing.break_start != break_start:
+                        changes["break_start"] = {
+                            "from": ExcelImportService._serialize_time(existing.break_start),
+                            "to": ExcelImportService._serialize_time(break_start),
+                        }
+                    if existing.break_end != break_end:
+                        changes["break_end"] = {
+                            "from": ExcelImportService._serialize_time(existing.break_end),
+                            "to": ExcelImportService._serialize_time(break_end),
+                        }
+                    if bool(existing.is_night_shift) != bool(effective_night):
+                        changes["is_night_shift"] = {"from": bool(existing.is_night_shift), "to": bool(effective_night)}
+                    if bool(existing.active) != bool(effective_active):
+                        changes["active"] = {"from": bool(existing.active), "to": bool(effective_active)}
+                    if changes:
+                        action = "update"
+                        status = "warning"
+                        message = "Cambios detectados; revisa antes de confirmar."
+                        summary["updated"] += 1
+                        summary["warnings"] += 1
+                    else:
+                        action = "keep"
+                        summary["unchanged"] += 1
                 else:
+                    action = "create"
                     summary["created"] += 1
             else:
                 summary["errors"] += 1
 
+            parsed_night_payload = ShiftAreaImportService._parse_bool(night_flag_raw, default=None)
             ImportPreviewRow.objects.create(
                 batch=batch,
                 sheet_name="shifts_import",
@@ -895,10 +1053,42 @@ class ShiftAreaImportService:
                     "end_time": ExcelImportService._serialize_time(end_time),
                     "break_start": ExcelImportService._serialize_time(break_start),
                     "break_end": ExcelImportService._serialize_time(break_end),
-                    "is_night_shift": ShiftAreaImportService._parse_bool(night_flag_raw, default=None),
+                    "is_night_shift": parsed_night_payload,
                     "active": ShiftAreaImportService._parse_bool(active_raw, default=True),
+                    "changes": changes if status == "warning" and action == "update" else {},
                 },
             )
+
+        if sync_mode:
+            matched_shift_ids = matched_shift_ids_by_property.get(fallback_property.id, set())
+            active_missing_shifts = Shift.objects.filter(
+                tenant=tenant,
+                property=fallback_property,
+                active=True,
+            ).exclude(id__in=matched_shift_ids)
+            next_row_number = 100000
+            for shift in active_missing_shifts.select_related("area").order_by("area__name", "name", "id"):
+                summary["to_deactivate"] += 1
+                summary["warnings"] += 1
+                ImportPreviewRow.objects.create(
+                    batch=batch,
+                    sheet_name="shifts_import",
+                    row_number=next_row_number,
+                    action="deactivate",
+                    status="warning",
+                    message="No aparece en el archivo completo de la sede; se marcara como inactivo.",
+                    payload={
+                        "shift_id": shift.id,
+                        "area_name": shift.area.name if shift.area_id else "",
+                        "shift_name": shift.name,
+                        "buk_code": shift.buk_code,
+                        "property_name": fallback_property.name,
+                        "property_id": fallback_property.id,
+                        "start_time": ExcelImportService._serialize_time(shift.start_time),
+                        "end_time": ExcelImportService._serialize_time(shift.end_time),
+                    },
+                )
+                next_row_number += 1
 
         batch.summary = summary
         batch.save(update_fields=["summary", "updated_at"])
@@ -908,103 +1098,141 @@ class ShiftAreaImportService:
     def confirm_shift_import(*, batch):
         created = 0
         updated = 0
+        unchanged = 0
+        deactivated = 0
         new_areas = 0
         actor = batch.created_by
-        rows = batch.preview_rows.filter(status="ok").order_by("row_number")
-        for row in rows:
-            payload = row.payload
-            property_id = payload.get("property_id")
-            if not property_id:
-                continue
+        rows = batch.preview_rows.filter(status__in=["ok", "warning"]).order_by("row_number")
+        with transaction.atomic():
+            for row in rows:
+                payload = row.payload
+                if row.action == "deactivate":
+                    shift_id = payload.get("shift_id")
+                    shift = Shift.objects.filter(
+                        tenant=batch.tenant,
+                        property=batch.property,
+                        id=shift_id,
+                        active=True,
+                    ).first()
+                    if shift is None:
+                        continue
+                    before = {
+                        "name": shift.name,
+                        "buk_code": shift.buk_code,
+                        "active": shift.active,
+                    }
+                    shift.active = False
+                    shift.save(update_fields=["active", "updated_at"])
+                    deactivated += 1
+                    if actor:
+                        AuditService.log(
+                            tenant=batch.tenant,
+                            property_obj=shift.property,
+                            user=actor,
+                            action="shift_deactivate_from_import_sync",
+                            entity_type="Shift",
+                            entity_id=shift.id,
+                            before=before,
+                            after={"name": shift.name, "buk_code": shift.buk_code, "active": shift.active},
+                        )
+                    continue
+                if row.action == "keep":
+                    unchanged += 1
+                    continue
+                property_id = payload.get("property_id")
+                if not property_id:
+                    continue
 
-            area, area_created = Area.objects.get_or_create(
-                tenant=batch.tenant,
-                property_id=property_id,
-                name=payload["area_name"],
-                defaults={"type": "", "active": True},
-            )
-            if area_created:
-                new_areas += 1
+                area, area_created = Area.objects.get_or_create(
+                    tenant=batch.tenant,
+                    property_id=property_id,
+                    name=payload["area_name"],
+                    defaults={"type": "", "active": True},
+                )
+                if area_created:
+                    new_areas += 1
 
-            start_time = ExcelImportService._parse_time(payload.get("start_time"))
-            end_time = ExcelImportService._parse_time(payload.get("end_time"))
-            break_start = ExcelImportService._parse_time(payload.get("break_start"))
-            break_end = ExcelImportService._parse_time(payload.get("break_end"))
-            if not start_time or not end_time:
-                continue
+                start_time = ExcelImportService._parse_time(payload.get("start_time"))
+                end_time = ExcelImportService._parse_time(payload.get("end_time"))
+                break_start = ExcelImportService._parse_time(payload.get("break_start"))
+                break_end = ExcelImportService._parse_time(payload.get("break_end"))
+                if not start_time or not end_time:
+                    continue
 
-            is_night_shift = payload.get("is_night_shift")
-            if is_night_shift is None:
-                is_night_shift = end_time <= start_time
+                is_night_shift = payload.get("is_night_shift")
+                if is_night_shift is None:
+                    is_night_shift = end_time <= start_time
 
-            shift = Shift.objects.filter(
-                tenant=batch.tenant,
-                property_id=property_id,
-                buk_code__iexact=payload["buk_code"],
-            ).first()
-            if shift is None:
                 shift = Shift.objects.filter(
                     tenant=batch.tenant,
                     property_id=property_id,
-                    area=area,
-                    name__iexact=payload["shift_name"],
+                    buk_code__iexact=payload["buk_code"],
                 ).first()
+                if shift is None:
+                    shift = Shift.objects.filter(
+                        tenant=batch.tenant,
+                        property_id=property_id,
+                        area=area,
+                        name__iexact=payload["shift_name"],
+                    ).first()
 
-            if shift is None:
-                shift = Shift.objects.create(
-                    tenant=batch.tenant,
-                    property_id=property_id,
-                    area=area,
-                    name=payload["shift_name"],
-                    buk_code=payload["buk_code"],
-                    start_time=start_time,
-                    end_time=end_time,
-                    break_start=break_start,
-                    break_end=break_end,
-                    is_night_shift=bool(is_night_shift),
-                    active=bool(payload.get("active", True)),
-                )
-                created += 1
+                if shift is None:
+                    shift = Shift.objects.create(
+                        tenant=batch.tenant,
+                        property_id=property_id,
+                        area=area,
+                        name=payload["shift_name"],
+                        buk_code=payload["buk_code"],
+                        start_time=start_time,
+                        end_time=end_time,
+                        break_start=break_start,
+                        break_end=break_end,
+                        is_night_shift=bool(is_night_shift),
+                        active=bool(payload.get("active", True)),
+                    )
+                    created += 1
+                    if actor:
+                        AuditService.log(
+                            tenant=batch.tenant,
+                            property_obj=shift.property,
+                            user=actor,
+                            action="shift_create_from_import",
+                            entity_type="Shift",
+                            entity_id=shift.id,
+                            before={},
+                            after={"name": shift.name, "buk_code": shift.buk_code},
+                        )
+                    continue
+
+                shift.area = area
+                shift.name = payload["shift_name"]
+                shift.buk_code = payload["buk_code"]
+                shift.start_time = start_time
+                shift.end_time = end_time
+                shift.break_start = break_start
+                shift.break_end = break_end
+                shift.is_night_shift = bool(is_night_shift)
+                shift.active = bool(payload.get("active", True))
+                shift.save()
+                updated += 1
                 if actor:
                     AuditService.log(
                         tenant=batch.tenant,
                         property_obj=shift.property,
                         user=actor,
-                        action="shift_create_from_import",
+                        action="shift_update_from_import",
                         entity_type="Shift",
                         entity_id=shift.id,
                         before={},
                         after={"name": shift.name, "buk_code": shift.buk_code},
                     )
-                continue
-
-            shift.area = area
-            shift.name = payload["shift_name"]
-            shift.buk_code = payload["buk_code"]
-            shift.start_time = start_time
-            shift.end_time = end_time
-            shift.break_start = break_start
-            shift.break_end = break_end
-            shift.is_night_shift = bool(is_night_shift)
-            shift.active = bool(payload.get("active", True))
-            shift.save()
-            updated += 1
-            if actor:
-                AuditService.log(
-                    tenant=batch.tenant,
-                    property_obj=shift.property,
-                    user=actor,
-                    action="shift_update_from_import",
-                    entity_type="Shift",
-                    entity_id=shift.id,
-                    before={},
-                    after={"name": shift.name, "buk_code": shift.buk_code},
-                )
 
         batch.summary = {
             **batch.summary,
             "applied_created": created,
             "applied_updated": updated,
+            "applied_unchanged": unchanged,
+            "applied_deactivated": deactivated,
             "applied_new_areas": new_areas,
         }
         batch.status = "confirmed"

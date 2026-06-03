@@ -5,6 +5,9 @@
     {% if can_import_workers %}
       <section class="panel">
         <h3 style="margin-top: 0;">Importar trabajadores (CSV/XLSX)</h3>
+        <div class="msg msg-warning" style="margin-top:0;">
+          Esta importacion sincroniza la sede completa seleccionada. El archivo debe contener todos los trabajadores activos de la sede; quienes no aparezcan seran marcados como inactivos.
+        </div>
         <p style="margin-top: 0;">
           <a href="/app/imports/workers-template/">Descargar plantilla XLSX de trabajadores</a>
           <span class="muted">|</span>
@@ -23,6 +26,10 @@
             <input type="checkbox" name="create_missing_areas" value="1">
             Crear areas faltantes automaticamente
           </label>
+          <label style="display:flex; gap:8px; align-items:flex-start; margin:0;">
+            <input type="checkbox" name="confirm_full_sync" value="1" required>
+            <span>Confirmo que este archivo contiene la lista completa de trabajadores activos de la sede seleccionada.</span>
+          </label>
           <button class="primary" type="submit">Generar vista previa</button>
         </form>
       </section>
@@ -31,6 +38,9 @@
     {% if can_import_shifts %}
       <section class="panel">
         <h3 style="margin-top: 0;">Importar turnos por area (XLSX/CSV)</h3>
+        <div class="msg msg-warning" style="margin-top:0;">
+          Esta importacion sincroniza la sede completa seleccionada. El archivo debe contener todos los turnos activos de la sede; los turnos ausentes quedaran inactivos para futuras asignaciones.
+        </div>
         <p style="margin-top: 0;">
           <a href="/app/imports/shifts-template/">Descargar plantilla XLSX de turnos</a>
           <span class="muted">|</span>
@@ -49,24 +59,12 @@
             <input type="checkbox" name="create_missing_areas" value="1">
             Crear areas faltantes automaticamente
           </label>
+          <label style="display:flex; gap:8px; align-items:flex-start; margin:0;">
+            <input type="checkbox" name="confirm_full_sync" value="1" required>
+            <span>Confirmo que este archivo contiene la lista completa de turnos activos de la sede seleccionada.</span>
+          </label>
           <button class="primary" type="submit">Generar vista previa</button>
         </form>
-      </section>
-    {% endif %}
-
-    {% if can_import_workers %}
-      <section class="panel">
-        <h3 style="margin-top: 0;">Importar Excel original</h3>
-        <form method="post" enctype="multipart/form-data" class="stack">
-          {% csrf_token %}
-          <input type="hidden" name="action" value="preview_excel">
-          <div>
-            <label>Archivo</label>
-            <input type="file" name="file" accept=".xlsx" required>
-          </div>
-          <button class="primary" type="submit">Analizar y previsualizar</button>
-        </form>
-        <p class="muted" style="margin-bottom: 0;">Referencia: pestana "Reporte carga BUK".</p>
       </section>
     {% endif %}
   </div>
@@ -103,84 +101,5 @@
     {% endif %}
   </section>
 
-  {% if selected_batch %}
-    <section class="panel" style="margin-bottom: 12px;">
-      <h3 style="margin-top: 0;">Resumen lote #{{ selected_batch.id }}</h3>
-      <p class="muted">Estado: {{ selected_batch_status_label }} | Fuente: {{ selected_batch_source_label }}</p>
-      <div class="grid-2" style="gap: 8px;">
-        {% for item in selected_batch_summary_rows %}
-          <div style="border:1px solid #e5e7eb; border-radius:6px; padding:8px;">
-            <div class="muted" style="text-transform:capitalize;">{{ item.key }}</div>
-            <div style="margin-top:4px; font-size:13px; word-break:break-word;">
-              {% if item.items %}
-                {% for kv in item.items %}
-                  <div><strong>{{ kv.subkey }}</strong>: {{ kv.subvalue }}</div>
-                {% endfor %}
-              {% elif item.is_block %}
-                <details>
-                  <summary>Ver detalle</summary>
-                  <pre style="white-space:pre-wrap; margin:6px 0 0 0; font-size:11px;">{{ item.value }}</pre>
-                </details>
-              {% else %}
-                {{ item.value }}
-              {% endif %}
-            </div>
-          </div>
-        {% endfor %}
-      </div>
-      {% if selected_batch.status == "preview" %}
-        <div style="display:flex; gap:8px; margin-top: 10px;">
-          <form method="post">
-            {% csrf_token %}
-            <input type="hidden" name="action" value="confirm_batch">
-            <input type="hidden" name="batch_id" value="{{ selected_batch.id }}">
-            <button class="primary" type="submit">Confirmar importacion</button>
-          </form>
-          <form method="post">
-            {% csrf_token %}
-            <input type="hidden" name="action" value="cancel_batch">
-            <input type="hidden" name="batch_id" value="{{ selected_batch.id }}">
-            <button type="submit">Cancelar lote</button>
-          </form>
-        </div>
-      {% endif %}
-    </section>
-
-    <section class="panel" style="overflow:auto;">
-      <h3 style="margin-top: 0;">Vista previa (primeras 300 filas)</h3>
-      <table>
-        <thead>
-          <tr>
-            <th>Hoja</th>
-            <th>Fila</th>
-            <th>Estado</th>
-            <th>Accion</th>
-            <th>Mensaje</th>
-            <th>Detalle</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for row in preview_rows %}
-            <tr>
-              <td>{{ row.sheet_name }}</td>
-              <td>{{ row.row_number }}</td>
-              <td>{{ row.status }}</td>
-              <td>{{ row.action }}</td>
-              <td>{{ row.message|default:"-" }}</td>
-              <td>
-                <details>
-                  <summary>Ver</summary>
-                  <pre style="white-space:pre-wrap; margin:6px 0 0 0; font-size:11px;">{{ row.payload_pretty }}</pre>
-                </details>
-              </td>
-            </tr>
-          {% empty %}
-            <tr>
-              <td colspan="6" class="muted">Sin filas de vista previa.</td>
-            </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </section>
-  {% endif %}
+  {% include "webui/_import_preview_modal.html" with import_modal_id="imports-preview-modal" import_title="Vista previa de importacion" import_confirm_action="confirm_batch" %}
 {% endblock %}
