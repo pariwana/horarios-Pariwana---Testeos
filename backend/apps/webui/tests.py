@@ -1786,6 +1786,34 @@ class WebUiSchedulingTests(TestCase):
         self.assertContains(response, "06:00-14:45 (Manana)")
         self.assertNotContains(response, "14:00-22:00 (Bar tarde)")
 
+    def test_scheduling_team_report_pdf_downloads_for_allowed_area(self):
+        ScheduleAssignment.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            worker=self.worker,
+            date=date(2026, 6, 1),
+            shift=self.shift,
+            created_by=self.user,
+            updated_by=self.user,
+        )
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+
+        response = self.client.get(
+            reverse("webui-scheduling-team-report-pdf"),
+            {
+                "date_from": "2026-06-01",
+                "date_to": "2026-06-07",
+                "area_id": str(self.area.id),
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertTrue(response.content.startswith(b"%PDF"))
+
     def test_scheduling_bulk_state_respects_worker_query_filter(self):
         Worker.objects.create(
             tenant=self.tenant,

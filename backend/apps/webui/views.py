@@ -24,6 +24,10 @@ from django.utils.text import slugify
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_http_methods
 from openpyxl import Workbook
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from apps.audit.models import AuditLog
 from apps.audit.services import AuditService
@@ -215,31 +219,37 @@ def _can_nav_module(user, tenant, property_obj, module_key, action=None, roles=N
     return action is None
 
 
-def _build_nav_items(user, tenant, property_obj):
-    items = [{"label": "Dashboard", "url": "/app/"}]
+def _build_nav_items(user, tenant, property_obj, current_path="/app/"):
+    def nav_item(label, url):
+        is_active = current_path == url or (url != "/app/" and current_path.startswith(url))
+        return {"label": label, "url": url, "active": is_active}
+
+    items = [nav_item("Dashboard", "/app/")]
     other_items = []
     if PermissionService.is_super_admin(user):
-        other_items.append({"label": "Tenants", "url": "/app/tenants/"})
-        other_items.append({"label": "Modulos", "url": "/app/modules/"})
-        other_items.append({"label": "Soporte", "url": "/app/support/"})
-        other_items.append({"label": "Auditoria global", "url": "/app/audit-global/"})
+        other_items.append(nav_item("Tenants", "/app/tenants/"))
+        other_items.append(nav_item("Modulos", "/app/modules/"))
+        other_items.append(nav_item("Soporte", "/app/support/"))
+        other_items.append(nav_item("Auditoria global", "/app/audit-global/"))
     if tenant is None:
         if other_items:
-            items.append({"label": "Otras funciones", "children": other_items})
+            items.append({"label": "Otras funciones", "children": other_items, "active": any(i["active"] for i in other_items)})
         return items
 
+    if _can_nav_module(user, tenant, property_obj, "scheduling", "can_schedule"):
+        items.append(nav_item("Asignacion", "/app/scheduling/"))
     if _can_nav_module(user, tenant, property_obj, "properties", roles=["admin"]):
-        other_items.append({"label": "Sedes", "url": "/app/properties/"})
+        other_items.append(nav_item("Sedes", "/app/properties/"))
     if _can_nav_module(user, tenant, property_obj, "workers", "can_access"):
-        items.append({"label": "Trabajadores", "url": "/app/workers/"})
+        items.append(nav_item("Trabajadores", "/app/workers/"))
     if _can_nav_module(user, tenant, property_obj, "areas", "can_access"):
-        items.append({"label": "Areas", "url": "/app/areas/"})
+        items.append(nav_item("Areas", "/app/areas/"))
     if _can_nav_module(user, tenant, property_obj, "shifts", "can_access"):
-        items.append({"label": "Turnos", "url": "/app/shifts/"})
+        items.append(nav_item("Turnos", "/app/shifts/"))
     if _can_nav_module(user, tenant, property_obj, "special_states", "can_access"):
-        items.append({"label": "Estados especiales", "url": "/app/special-states/"})
+        items.append(nav_item("Estados especiales", "/app/special-states/"))
     if _can_nav_module(user, tenant, property_obj, "users_permissions", "can_manage_users"):
-        items.append({"label": "Roles y permisos", "url": "/app/users-permissions/"})
+        items.append(nav_item("Roles y permisos", "/app/users-permissions/"))
     if _can_nav_module(user, tenant, property_obj, "excel_import"):
         can_import_workers = property_obj is not None and PermissionService.user_can_property_action(
             user, tenant, property_obj, "can_manage_workers"
@@ -248,24 +258,22 @@ def _build_nav_items(user, tenant, property_obj):
             user, tenant, property_obj, "can_manage_shifts"
         )
         if can_import_workers or can_import_shifts:
-            items.append({"label": "Importaciones", "url": "/app/imports/"})
+            other_items.append(nav_item("Importaciones", "/app/imports/"))
     if _can_nav_module(user, tenant, property_obj, "backup", roles=["admin"]):
-        other_items.append({"label": "Backup JSON", "url": "/app/backup/"})
+        other_items.append(nav_item("Backup JSON", "/app/backup/"))
     if _can_nav_module(user, tenant, property_obj, "month_closure", "can_access"):
-        items.append({"label": "Cierre de mes", "url": "/app/month-closure/"})
-    if _can_nav_module(user, tenant, property_obj, "scheduling", "can_schedule"):
-        items.append({"label": "Asignacion", "url": "/app/scheduling/"})
+        items.append(nav_item("Cierre de mes", "/app/month-closure/"))
     if _can_nav_module(user, tenant, property_obj, "control", "can_use_control"):
-        items.append({"label": "Control 15 dias", "url": "/app/control/"})
+        items.append(nav_item("Control 15 dias", "/app/control/"))
     if _can_nav_module(user, tenant, property_obj, "audit", "can_access"):
-        items.append({"label": "Auditoria", "url": "/app/audit/"})
+        other_items.append(nav_item("Auditoria", "/app/audit/"))
     if (
         _can_nav_module(user, tenant, property_obj, "buk_preview", "can_view_reports")
         or _can_nav_module(user, tenant, property_obj, "buk_preview", "can_export_buk")
     ):
-        items.append({"label": "Reporte BUK", "url": "/app/buk-report/"})
+        items.append(nav_item("Reporte BUK", "/app/buk-report/"))
     if other_items:
-        items.append({"label": "Otras funciones", "children": other_items})
+        items.append({"label": "Otras funciones", "children": other_items, "active": any(i["active"] for i in other_items)})
     return items
 
 
@@ -308,7 +316,7 @@ def _build_context(request, require_property=False):
             "support_session": support_session,
             "support_sessions": [],
             "context_error": "No hay sede disponible para este usuario en el tenant seleccionado.",
-            "nav_items": _build_nav_items(request.user, selected_tenant, None),
+            "nav_items": _build_nav_items(request.user, selected_tenant, None, request.path),
         }
 
     if selected_tenant and not request.user.is_super_admin:
@@ -325,7 +333,7 @@ def _build_context(request, require_property=False):
                 "support_session": support_session,
                 "support_sessions": [],
                 "context_error": "No tienes permisos para operar en este tenant.",
-                "nav_items": _build_nav_items(request.user, selected_tenant, selected_property),
+                "nav_items": _build_nav_items(request.user, selected_tenant, selected_property, request.path),
             }
 
     if selected_tenant and selected_property:
@@ -343,7 +351,7 @@ def _build_context(request, require_property=False):
                 "support_session": support_session,
                 "support_sessions": [],
                 "context_error": "No tienes permisos de acceso en esta sede.",
-                "nav_items": _build_nav_items(request.user, selected_tenant, selected_property),
+                "nav_items": _build_nav_items(request.user, selected_tenant, selected_property, request.path),
             }
 
     support_sessions = []
@@ -362,7 +370,7 @@ def _build_context(request, require_property=False):
         "support_session": support_session,
         "support_sessions": support_sessions,
         "context_error": "",
-        "nav_items": _build_nav_items(request.user, selected_tenant, selected_property),
+        "nav_items": _build_nav_items(request.user, selected_tenant, selected_property, request.path),
     }
 
 
@@ -1775,6 +1783,142 @@ def scheduling_page(request):
             "templates_load_error": templates_load_error,
         },
     )
+
+
+@login_required
+@require_GET
+def scheduling_team_report_pdf(request):
+    ctx = _build_context(request, require_property=True)
+    if ctx.get("context_error"):
+        return HttpResponseForbidden(ctx["context_error"])
+
+    tenant = ctx["selected_tenant"]
+    property_obj = ctx["selected_property"]
+    if not PermissionService.user_can_module(request.user, tenant, "scheduling"):
+        return HttpResponseForbidden("Modulo desactivado: scheduling.")
+    if not PermissionService.user_can_property_action(request.user, tenant, property_obj, "can_access"):
+        return HttpResponseForbidden("No tienes acceso a esta sede.")
+
+    area_id = str(request.GET.get("area_id", "")).strip()
+    if not area_id.isdigit():
+        return HttpResponseForbidden("Debe seleccionar un area.")
+    area = Area.objects.filter(tenant=tenant, property=property_obj, id=int(area_id), active=True).first()
+    if area is None:
+        return HttpResponseForbidden("Area no encontrada.")
+    if not PermissionService.user_can_area_view(request.user, tenant, property_obj, area):
+        return HttpResponseForbidden("No tienes permisos para ver esta area.")
+
+    today = timezone.localdate()
+    date_from = _parse_date_or_default(request.GET.get("date_from", ""), today)
+    date_to = _parse_date_or_default(request.GET.get("date_to", ""), today + timedelta(days=6))
+    if date_from > date_to:
+        date_from, date_to = date_to, date_from
+    if (date_to - date_from).days > 45:
+        return HttpResponseForbidden("El reporte PDF permite un rango maximo de 45 dias.")
+
+    date_columns = []
+    cursor = date_from
+    while cursor <= date_to:
+        date_columns.append(cursor)
+        cursor += timedelta(days=1)
+
+    assignments = (
+        ScheduleAssignment.objects.select_related("worker", "shift", "special_state")
+        .filter(
+            tenant=tenant,
+            property=property_obj,
+            worker__area=area,
+            worker__active=True,
+            date__gte=date_from,
+            date__lte=date_to,
+        )
+        .order_by("date", "shift__start_time", "shift__name", "worker__last_name", "worker__first_name")
+    )
+    grid = defaultdict(list)
+    shift_rows = {}
+    state_rows = {}
+    for assignment in assignments:
+        worker_name = f"{assignment.worker.first_name} {assignment.worker.last_name}".strip()
+        if assignment.shift_id:
+            key = ("shift", assignment.shift_id)
+            shift_rows[key] = assignment.shift
+        elif assignment.special_state_id:
+            key = ("state", assignment.special_state_id)
+            state_rows[key] = assignment.special_state
+        else:
+            continue
+        grid[(key, assignment.date)].append(worker_name)
+
+    row_keys = []
+    for key, shift in sorted(
+        shift_rows.items(),
+        key=lambda item: (item[1].start_time, item[1].end_time, item[1].name),
+    ):
+        row_keys.append((key, f"{shift.start_time.strftime('%H:%M')} - {shift.end_time.strftime('%H:%M')}"))
+    for key, state in sorted(state_rows.items(), key=lambda item: item[1].name):
+        row_keys.append((key, state.name))
+
+    buffer = BytesIO()
+    response = HttpResponse(content_type="application/pdf")
+    file_name = f"reporte_equipo_{property_obj.slug}_{area.name.lower().replace(' ', '_')}_{date_from}_{date_to}.pdf"
+    response["Content-Disposition"] = f'attachment; filename="{file_name}"'
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=landscape(A4),
+        leftMargin=18,
+        rightMargin=18,
+        topMargin=18,
+        bottomMargin=18,
+    )
+    styles = getSampleStyleSheet()
+    small = styles["BodyText"]
+    small.fontSize = 6.5
+    small.leading = 7.5
+    header_style = styles["Heading2"]
+    story = [
+        Paragraph(f"{property_obj.name} - {area.name}", header_style),
+        Paragraph(f"{date_from.strftime('%d-%m-%Y')} a {date_to.strftime('%d-%m-%Y')}", styles["BodyText"]),
+        Spacer(1, 8),
+    ]
+
+    header = [Paragraph("Turno", small)]
+    for day in date_columns:
+        header.append(Paragraph(f"{day.strftime('%d/%m')}<br/>{WEEKDAY_SHORT_LABELS[day.weekday()]}", small))
+    table_data = [header]
+    if row_keys:
+        for key, label in row_keys:
+            row = [Paragraph(label, small)]
+            for day in date_columns:
+                names = sorted(grid.get((key, day), []))
+                row.append(Paragraph("<br/>".join(names) if names else "-", small))
+            table_data.append(row)
+    else:
+        table_data.append([Paragraph("Sin asignaciones", small)] + [Paragraph("-", small) for _ in date_columns])
+
+    first_col_width = 76
+    remaining_width = landscape(A4)[0] - doc.leftMargin - doc.rightMargin - first_col_width
+    date_col_width = max(34, remaining_width / max(1, len(date_columns)))
+    table = Table(table_data, repeatRows=1, colWidths=[first_col_width] + [date_col_width] * len(date_columns))
+    table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e5e7eb")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#111827")),
+                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#cbd5e1")),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("BACKGROUND", (0, 1), (0, -1), colors.HexColor("#f8fafc")),
+                ("LEFTPADDING", (0, 0), (-1, -1), 3),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                ("TOPPADDING", (0, 0), (-1, -1), 3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ]
+        )
+    )
+    story.append(table)
+    doc.build(story)
+    response.write(buffer.getvalue())
+    return response
 
 
 @login_required

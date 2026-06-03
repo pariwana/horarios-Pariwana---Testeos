@@ -251,6 +251,12 @@
       }
     }
   </style>
+  <div class="page-header">
+    <div>
+      <h1 class="section-title">Asignacion <span class="info-dot" title="Aqui asignas turnos o estados especiales por trabajador y fecha. Filtra por mes, area o trabajador para trabajar mas rapido.">i</span></h1>
+      <p class="compact-note">La grilla mensual es el punto principal para cargar horarios.</p>
+    </div>
+  </div>
   <section class="panel scheduling-toolbar" style="margin-bottom: 12px;">
     <form method="get" action="/app/scheduling/" class="scheduling-filters-form">
       <div>
@@ -289,6 +295,32 @@
     {% endif %}
     <p class="scheduling-hint">Tip: usa filtros y desplaza la grilla horizontalmente para editar dias del mes. Selecciona <strong>--</strong> para limpiar una asignacion.</p>
     <p class="scheduling-scroll-note">En telefono se muestra una vista por trabajador. En desktop se mantiene la grilla mensual.</p>
+  </section>
+
+  <section class="panel" style="margin-bottom: 12px;">
+    <details>
+      <summary style="cursor:pointer; font-weight:700;">Reporte PDF para equipo</summary>
+      <form method="get" action="/app/scheduling/team-report.pdf" class="filters-bar" style="margin-top:10px;">
+        <div>
+          <label>Desde</label>
+          <input type="date" name="date_from" value="{{ month_value }}-01" required>
+        </div>
+        <div>
+          <label>Hasta</label>
+          <input type="date" name="date_to" value="{{ month_value }}-{{ days|length|stringformat:'02d' }}" required>
+        </div>
+        <div>
+          <label>Area</label>
+          <select name="area_id" required>
+            {% for area in areas %}
+              <option value="{{ area.id }}" {% if selected_area_id == area.id %}selected{% endif %}>{{ area.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <button class="primary" type="submit">Descargar PDF</button>
+      </form>
+      <p class="compact-note">El PDF agrupa trabajadores por fecha y turno. Los estados especiales aparecen al final.</p>
+    </details>
   </section>
 
   {% if pending_previews %}

@@ -21,11 +21,13 @@
     .brand { font-size: 16px; font-weight: 700; margin-bottom: 18px; }
     .nav a { display: block; color: #e5e7eb; text-decoration: none; padding: 10px; border-radius: 6px; margin-bottom: 4px; }
     .nav a:hover { background: #1f2937; }
+    .nav a.active { background: var(--accent); color: #ffffff; font-weight: 700; }
     .nav-group { margin-bottom: 4px; }
     .nav-group summary { cursor: pointer; color: #e5e7eb; padding: 10px; border-radius: 6px; list-style: none; }
     .nav-group summary::-webkit-details-marker { display: none; }
     .nav-group summary:hover { background: #1f2937; }
     .nav-group[open] summary { background: #111827; }
+    .nav-group.active > summary { background: var(--accent); color: #ffffff; font-weight: 700; }
     .nav-group a { margin-left: 10px; padding: 8px 10px; color: #cbd5e1; }
     .main { padding: 16px; }
     .topbar { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -51,6 +53,8 @@
     .stack { display: grid; gap: 10px; }
     .page-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
     .page-header h1, .page-header h2 { margin: 0; font-size: 22px; }
+    .section-title { display: inline-flex; align-items: center; gap: 8px; }
+    .info-dot { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border: 1px solid var(--line); border-radius: 999px; color: var(--accent); font-size: 12px; font-weight: 700; background: #fff; cursor: help; }
     .page-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .filters-bar { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; margin-bottom: 12px; }
     .ops-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 420px); gap: 12px; align-items: start; }
@@ -137,14 +141,14 @@
       <nav class="nav">
         {% for item in nav_items %}
           {% if item.children %}
-            <details class="nav-group">
+            <details class="nav-group {% if item.active %}active{% endif %}" {% if item.active %}open{% endif %}>
               <summary>{{ item.label }}</summary>
               {% for child in item.children %}
-                <a href="{{ child.url }}">{{ child.label }}</a>
+                <a href="{{ child.url }}" class="{% if child.active %}active{% endif %}">{{ child.label }}</a>
               {% endfor %}
             </details>
           {% else %}
-            <a href="{{ item.url }}">{{ item.label }}</a>
+            <a href="{{ item.url }}" class="{% if item.active %}active{% endif %}">{{ item.label }}</a>
           {% endif %}
         {% endfor %}
       </nav>

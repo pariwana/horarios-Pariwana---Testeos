@@ -27,6 +27,7 @@ urlpatterns = [
     path("app/backup/download/", views.backup_download, name="webui-backup-download"),
     path("app/month-closure/", views.month_closure_page, name="webui-month-closure"),
     path("app/scheduling/", views.scheduling_page, name="webui-scheduling"),
+    path("app/scheduling/team-report.pdf", views.scheduling_team_report_pdf, name="webui-scheduling-team-report-pdf"),
     path("app/scheduling/assign/", views.scheduling_assign, name="webui-scheduling-assign"),
     path("app/scheduling/bulk-shift/", views.scheduling_bulk_shift, name="webui-scheduling-bulk-shift"),
     path("app/scheduling/bulk-state/", views.scheduling_bulk_state, name="webui-scheduling-bulk-state"),
