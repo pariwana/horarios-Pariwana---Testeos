@@ -1,0 +1,15 @@
+.deps
+.env
+media
+staticfiles
+test.sqlite3
+*.sqlite3
+*.db
+*.log
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
