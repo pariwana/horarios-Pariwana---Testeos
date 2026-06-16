@@ -9,7 +9,6 @@ class AreaForm(forms.ModelForm):
         model = Area
         fields = [
             "name",
-            "type",
             "active",
         ]
 
@@ -23,14 +22,7 @@ class WorkerForm(forms.ModelForm):
             "last_name",
             "area",
             "active",
-            "buk_employee_code",
-            "start_date",
-            "end_date",
         ]
-        widgets = {
-            "start_date": forms.DateInput(attrs={"type": "date"}),
-            "end_date": forms.DateInput(attrs={"type": "date"}),
-        }
 
 
 class ShiftForm(forms.ModelForm):

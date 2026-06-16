@@ -55,6 +55,7 @@ class PermissionServiceTests(TestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(name="Pariwana Hostels", slug="pariwana-hostels")
         self.property = Property.objects.create(tenant=self.tenant, name="Pariwana Cusco", slug="pariwana-cusco")
+        self.property_2 = Property.objects.create(tenant=self.tenant, name="Pariwana Lima", slug="pariwana-lima")
         self.user = User.objects.create_user(email="supervisor@pariwana.test", password="StrongPass123")
         self.area = Area.objects.create(tenant=self.tenant, property=self.property, name="Recepción")
         self.area_2 = Area.objects.create(tenant=self.tenant, property=self.property, name="Housekeeping")
@@ -171,6 +172,50 @@ class PermissionServiceTests(TestCase):
                 area=self.area_2,
             )
         )
+
+    def test_admin_with_all_properties_access_sees_new_properties(self):
+        admin = User.objects.create_user(email="admin-all@pariwana.test", password="StrongPass123")
+        UserTenantRole.objects.create(
+            user=admin,
+            tenant=self.tenant,
+            role=RoleChoices.ADMIN,
+            all_properties_access=True,
+            property_permissions_template={"can_access": True},
+        )
+        future_property = Property.objects.create(
+            tenant=self.tenant,
+            name="Pariwana Miraflores",
+            slug="pariwana-miraflores",
+        )
+
+        accessible_ids = PermissionService.get_accessible_property_ids(admin, self.tenant)
+        self.assertIn(self.property.id, accessible_ids)
+        self.assertIn(self.property_2.id, accessible_ids)
+        self.assertIn(future_property.id, accessible_ids)
+        self.assertTrue(PermissionService.user_can_property_action(admin, self.tenant, future_property, "can_manage_users"))
+
+    def test_operator_with_all_properties_access_uses_permission_template_for_new_properties(self):
+        operator = User.objects.create_user(email="operator-all-sites@pariwana.test", password="StrongPass123")
+        UserTenantRole.objects.create(
+            user=operator,
+            tenant=self.tenant,
+            role=RoleChoices.OPERATOR,
+            all_properties_access=True,
+            property_permissions_template={
+                "can_access": True,
+                "can_schedule": True,
+                "can_export_buk": False,
+            },
+        )
+        future_property = Property.objects.create(
+            tenant=self.tenant,
+            name="Pariwana Miraflores",
+            slug="pariwana-miraflores",
+        )
+
+        self.assertIn(future_property.id, PermissionService.get_accessible_property_ids(operator, self.tenant))
+        self.assertTrue(PermissionService.user_can_property_action(operator, self.tenant, future_property, "can_schedule"))
+        self.assertFalse(PermissionService.user_can_property_action(operator, self.tenant, future_property, "can_export_buk"))
 
 
 class ApiPermissionTests(TestCase):

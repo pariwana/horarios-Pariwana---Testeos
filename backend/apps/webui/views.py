@@ -6,6 +6,7 @@ from collections import defaultdict
 from datetime import date, timedelta, datetime, time
 from io import BytesIO, StringIO
 import csv
+from types import SimpleNamespace
 from uuid import uuid4
 from urllib.parse import urlencode
 
@@ -251,11 +252,44 @@ def _property_permission_payload_from_request(request, prefix=""):
     return {key: bool(request.POST.get(f"{prefix}{key}")) for key in PROPERTY_PERMISSION_KEYS}
 
 
+def _property_permission_object_from_payload(payload):
+    normalized = RoleProfileService.normalize_permissions(payload)
+    return SimpleNamespace(**normalized)
+
+
 def _apply_role_profile_defaults(request, role_profile):
     permissions = _property_permission_payload_from_request(request)
     if bool(request.POST.get("apply_role_profile_defaults")):
         permissions.update(RoleProfileService.permission_defaults_for_profile(role_profile))
     return permissions
+
+
+def _selected_properties_from_request(request, tenant, current_property, role):
+    all_properties_access = bool(request.POST.get("all_properties_access"))
+    tenant_properties = Property.objects.filter(tenant=tenant).order_by("name")
+    if role not in {RoleChoices.ADMIN, RoleChoices.OPERATOR}:
+        return False, [current_property]
+    if all_properties_access:
+        return True, list(tenant_properties)
+    selected_ids = [int(item) for item in request.POST.getlist("property_ids") if str(item).isdigit()]
+    properties = list(tenant_properties.filter(id__in=selected_ids))
+    if not properties:
+        properties = [current_property]
+    return False, properties
+
+
+def _sync_user_property_permissions(*, user, tenant, properties, permission_payload, all_properties_access):
+    selected_ids = [item.id for item in properties]
+    for item in properties:
+        UserPropertyPermission.objects.update_or_create(
+            user=user,
+            tenant=tenant,
+            property=item,
+            defaults=permission_payload,
+        )
+    if not all_properties_access:
+        UserPropertyPermission.objects.filter(user=user, tenant=tenant).exclude(property_id__in=selected_ids).delete()
+        UserAreaPermission.objects.filter(user=user, tenant=tenant).exclude(property_id__in=selected_ids).delete()
 
 
 def _get_role_profile_from_request(request, tenant):
@@ -356,7 +390,7 @@ def _build_nav_items(user, tenant, property_obj, current_path="/app/"):
     if _can_nav_module(user, tenant, property_obj, "month_closure", roles=["admin"]):
         items.append(nav_item("Cierre de mes", "/app/month-closure/"))
     if _can_nav_module(user, tenant, property_obj, "control", "can_use_control"):
-        items.append(nav_item("Control 15 dias", "/app/control/"))
+        other_items.append(nav_item("Control 15 dias", "/app/control/"))
     if _can_nav_module(user, tenant, property_obj, "audit", roles=["admin"]):
         other_items.append(nav_item("Auditoria", "/app/audit/"))
     if (
@@ -619,7 +653,6 @@ def areas_page(request):
                 return redirect("webui-areas")
             before = _audit_snapshot(target, ["name", "type", "active"])
             target.name = str(request.POST.get("name", "")).strip()
-            target.type = str(request.POST.get("type", "")).strip()
             target.active = bool(request.POST.get("active"))
             if not target.name:
                 messages.error(request, "El nombre del area es obligatorio.")
@@ -8308,17 +8341,29 @@ def users_permissions_page(request):
                     user.set_password(password)
             user.save()
 
+            permission_payload = _apply_role_profile_defaults(request, role_profile)
+            all_properties_access, selected_properties = _selected_properties_from_request(
+                request,
+                tenant,
+                property_obj,
+                role,
+            )
             UserTenantRole.objects.update_or_create(
                 user=user,
                 tenant=tenant,
-                defaults={"role": role, "role_profile": role_profile},
+                defaults={
+                    "role": role,
+                    "role_profile": role_profile,
+                    "all_properties_access": all_properties_access,
+                    "property_permissions_template": RoleProfileService.normalize_permissions(permission_payload),
+                },
             )
-            permission_payload = _apply_role_profile_defaults(request, role_profile)
-            UserPropertyPermission.objects.update_or_create(
+            _sync_user_property_permissions(
                 user=user,
                 tenant=tenant,
-                property=property_obj,
-                defaults=permission_payload,
+                properties=selected_properties,
+                permission_payload=permission_payload,
+                all_properties_access=all_properties_access,
             )
             selected_area_ids = [int(x) for x in request.POST.getlist("area_ids") if str(x).isdigit()]
             valid_areas = Area.objects.filter(tenant=tenant, property=property_obj, id__in=selected_area_ids)
@@ -8353,18 +8398,33 @@ def users_permissions_page(request):
             role_profile = _get_role_profile_from_request(request, tenant)
             if role_profile is not None:
                 role = role_profile.base_role
+            permission_payload = _apply_role_profile_defaults(request, role_profile)
+            if role not in {"admin", "operator", "supervisor"}:
+                existing_role = UserTenantRole.objects.filter(user=target_user, tenant=tenant).first()
+                role = existing_role.role if existing_role else ""
+            all_properties_access, selected_properties = _selected_properties_from_request(
+                request,
+                tenant=tenant,
+                current_property=property_obj,
+                role=role,
+            )
             if role in {"admin", "operator", "supervisor"}:
                 UserTenantRole.objects.update_or_create(
                     user=target_user,
                     tenant=tenant,
-                    defaults={"role": role, "role_profile": role_profile},
+                    defaults={
+                        "role": role,
+                        "role_profile": role_profile,
+                        "all_properties_access": all_properties_access,
+                        "property_permissions_template": RoleProfileService.normalize_permissions(permission_payload),
+                    },
                 )
-            permission_payload = _apply_role_profile_defaults(request, role_profile)
-            UserPropertyPermission.objects.update_or_create(
+            _sync_user_property_permissions(
                 user=target_user,
                 tenant=tenant,
-                property=property_obj,
-                defaults=permission_payload,
+                properties=selected_properties,
+                permission_payload=permission_payload,
+                all_properties_access=all_properties_access,
             )
             selected_area_ids = [int(x) for x in request.POST.getlist("area_ids") if str(x).isdigit()]
             UserAreaPermission.objects.filter(
@@ -8473,14 +8533,19 @@ def users_permissions_page(request):
             messages.success(request, "Usuario desactivado.")
             return redirect("webui-users-permissions")
 
+    tenant_properties = list(Property.objects.filter(tenant=tenant).order_by("name"))
     areas = list(Area.objects.filter(tenant=tenant, property=property_obj, active=True).order_by("name"))
     role_map = {
         item.user_id: item
         for item in UserTenantRole.objects.filter(tenant=tenant).select_related("user", "role_profile")
     }
-    prop_perms = list(
-        UserPropertyPermission.objects.filter(tenant=tenant, property=property_obj).select_related("user")
+    tenant_prop_perms = list(
+        UserPropertyPermission.objects.filter(tenant=tenant).select_related("user", "property")
     )
+    prop_perms = [item for item in tenant_prop_perms if item.property_id == property_obj.id]
+    property_ids_map = {}
+    for item in tenant_prop_perms:
+        property_ids_map.setdefault(item.user_id, set()).add(item.property_id)
     area_perms = list(
         UserAreaPermission.objects.filter(tenant=tenant, property=property_obj).select_related("user", "area")
     )
@@ -8489,10 +8554,16 @@ def users_permissions_page(request):
         area_map.setdefault(item.user_id, set()).add(item.area_id)
 
     rows = []
+    included_user_ids = set()
     for perm in prop_perms:
         tenant_role = role_map.get(perm.user_id)
         role_profile_name = tenant_role.role_profile.name if tenant_role and tenant_role.role_profile_id else ""
         role_label = dict(RoleChoices.choices).get(tenant_role.role, tenant_role.role) if tenant_role else ""
+        selected_property_ids = (
+            {item.id for item in tenant_properties}
+            if tenant_role and tenant_role.all_properties_access
+            else property_ids_map.get(perm.user_id, set())
+        )
         rows.append(
             {
                 "user": perm.user,
@@ -8500,8 +8571,33 @@ def users_permissions_page(request):
                 "role_label": role_label,
                 "role_profile_name": role_profile_name,
                 "role_profile_id": tenant_role.role_profile_id if tenant_role else None,
+                "all_properties_access": tenant_role.all_properties_access if tenant_role else False,
+                "selected_property_ids": selected_property_ids,
                 "permission": perm,
                 "selected_area_ids": area_map.get(perm.user_id, set()),
+            }
+        )
+        included_user_ids.add(perm.user_id)
+    for tenant_role in role_map.values():
+        if (
+            tenant_role.user_id in included_user_ids
+            or not tenant_role.all_properties_access
+            or tenant_role.role not in {RoleChoices.ADMIN, RoleChoices.OPERATOR}
+        ):
+            continue
+        role_profile_name = tenant_role.role_profile.name if tenant_role.role_profile_id else ""
+        role_label = dict(RoleChoices.choices).get(tenant_role.role, tenant_role.role)
+        rows.append(
+            {
+                "user": tenant_role.user,
+                "role": tenant_role.role,
+                "role_label": role_label,
+                "role_profile_name": role_profile_name,
+                "role_profile_id": tenant_role.role_profile_id,
+                "all_properties_access": True,
+                "selected_property_ids": {item.id for item in tenant_properties},
+                "permission": _property_permission_object_from_payload(tenant_role.property_permissions_template),
+                "selected_area_ids": area_map.get(tenant_role.user_id, set()),
             }
         )
     rows.sort(key=lambda item: item["user"].email)
@@ -8513,6 +8609,7 @@ def users_permissions_page(request):
             **ctx,
             "rows": rows,
             "areas": areas,
+            "tenant_properties": tenant_properties,
             "role_profiles": role_profiles,
             "permission_keys": PROPERTY_PERMISSION_KEYS,
         },

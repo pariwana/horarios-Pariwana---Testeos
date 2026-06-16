@@ -1,13 +1,13 @@
 services:
   db:
     image: postgres:16-alpine
-    container_name: pariwana_scheduler_db
+    container_name: pariwana_scheduler_5000_db
     environment:
       POSTGRES_DB: pariwana_buk
       POSTGRES_USER: pariwana
       POSTGRES_PASSWORD: pariwana_dev_password
     ports:
-      - "5433:5432"
+      - "5434:5432"
     volumes:
       - pariwana_postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -19,7 +19,7 @@ services:
   web:
     build:
       context: ./backend
-    container_name: pariwana_scheduler_web
+    container_name: pariwana_scheduler_5000_web
     depends_on:
       db:
         condition: service_healthy
@@ -28,6 +28,7 @@ services:
       DEBUG: "true"
       ENVIRONMENT: development
       ALLOWED_HOSTS: 127.0.0.1,localhost,0.0.0.0
+      DATABASE_URL: ""
       DB_NAME: pariwana_buk
       DB_USER: pariwana
       DB_PASSWORD: pariwana_dev_password
@@ -40,11 +41,10 @@ services:
       DEMO_PASSWORD: Pariwana2026!
       DEMO_SCHEDULE_DAYS: "30"
     ports:
-      - "8000:8000"
+      - "5000:8000"
     volumes:
       - ./backend:/app
     restart: unless-stopped
 
 volumes:
   pariwana_postgres_data:
-

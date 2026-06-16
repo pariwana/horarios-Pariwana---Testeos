@@ -63,6 +63,8 @@ class UserTenantRole(TimestampedModel):
         on_delete=models.SET_NULL,
         related_name="user_assignments",
     )
+    all_properties_access = models.BooleanField(default=False)
+    property_permissions_template = models.JSONField(default=dict, blank=True)
 
     class Meta:
         unique_together = [("user", "tenant")]

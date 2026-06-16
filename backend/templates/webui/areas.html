@@ -122,10 +122,6 @@
               <label>Nombre</label>
               <input type="text" name="name" value="{{ row.area.name }}" required>
             </div>
-            <div>
-              <label>Tipo</label>
-              <input type="text" name="type" value="{{ row.area.type }}">
-            </div>
             <label style="display:flex; gap:8px; align-items:center;">
               <input type="checkbox" name="active" {% if row.area.active %}checked{% endif %}>
               Activa

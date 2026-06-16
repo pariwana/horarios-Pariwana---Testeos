@@ -19,6 +19,7 @@ from apps.modules.models import ModuleActivation
 from apps.scheduling.models import ScheduleAssignment, SchedulePatternTemplate, ScheduleRangeTemplate
 from apps.tenants.models import Property, Tenant, TenantSupportAccessSession
 from apps.users.models import RoleChoices, RoleProfile, User, UserAreaPermission, UserPropertyPermission, UserTenantRole
+from apps.users.services import PermissionService
 from apps.workers.models import Area, Shift, SpecialState, Worker
 
 
@@ -627,6 +628,12 @@ class WebUiAreasTests(TestCase):
             ).exists()
         )
 
+    def test_areas_forms_hide_type_field(self):
+        self._activate_context()
+        response = self.client.get(reverse("webui-areas"))
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'name="type"', html=False)
+
     def test_areas_page_deactivate_requires_reassignment_when_dependencies_exist(self):
         Worker.objects.create(
             tenant=self.tenant,
@@ -719,6 +726,19 @@ class WebUiWorkersTests(TestCase):
                 document_number="12312312",
             ).exists()
         )
+
+    def test_worker_create_form_hides_buk_and_date_fields(self):
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+
+        response = self.client.get(reverse("webui-workers"))
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'name="buk_employee_code"', html=False)
+        self.assertNotContains(response, 'name="start_date"', html=False)
+        self.assertNotContains(response, 'name="end_date"', html=False)
 
     def test_supervisor_cannot_create_worker_from_webui(self):
         supervisor = User.objects.create_user(email="worker-supervisor@pariwana.test", password="StrongPass123")
@@ -4454,8 +4474,8 @@ class WebUiBukReportTests(TestCase):
             },
         )
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Compatible")
-        self.assertContains(response, "Log ID:")
+        self.assertNotContains(response, "Herramienta avanzada: comparar con Excel base")
+        self.assertNotContains(response, "Log ID:")
         self.assertTrue(BukTemplateCompareLog.objects.exists())
         log = BukTemplateCompareLog.objects.latest("id")
         self.assertEqual(len(log.reference_file_sha256), 64)
@@ -4499,7 +4519,7 @@ class WebUiBukReportTests(TestCase):
         self.assertEqual(len(log.reference_file_sha256), 64)
         self.assertGreater(log.reference_file_size_bytes, 0)
 
-    def test_buk_report_history_can_filter_by_result(self):
+    def test_buk_report_page_hides_compare_history(self):
         BukTemplateCompareLog.objects.create(
             tenant=self.tenant,
             property=self.property,
@@ -4540,7 +4560,8 @@ class WebUiBukReportTests(TestCase):
             },
         )
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "incompatible.xlsx")
+        self.assertNotContains(response, "Historial de comparaciones tecnicas")
+        self.assertNotContains(response, "incompatible.xlsx")
         self.assertNotContains(response, "ok.xlsx")
 
     def test_buk_report_history_can_download_json_by_log_id(self):
@@ -4593,7 +4614,7 @@ class WebUiBukReportTests(TestCase):
         self.assertIn("attachment; filename=", response["Content-Disposition"])
         self.assertIn("ok-ui-csv.xlsx", response.content.decode("utf-8"))
 
-    def test_buk_report_history_supports_date_filter_and_pagination(self):
+    def test_buk_report_history_is_not_rendered_on_page(self):
         for idx in range(1, 5):
             BukTemplateCompareLog.objects.create(
                 tenant=self.tenant,
@@ -4622,13 +4643,11 @@ class WebUiBukReportTests(TestCase):
             },
         )
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Pagina 1 de 4")
-        self.assertContains(response, "hist-4.xlsx")
+        self.assertNotContains(response, "Pagina 1 de 4")
+        self.assertNotContains(response, "hist-4.xlsx")
         self.assertNotContains(response, "hist-3.xlsx")
-        self.assertContains(response, "/api/buk/compare-template-logs/?")
-        self.assertContains(response, "page_size=1", html=False)
-        self.assertContains(response, "compared_from=2026-01-01", html=False)
-        self.assertContains(response, "Descargar CSV historial")
+        self.assertNotContains(response, "/api/buk/compare-template-logs/?")
+        self.assertNotContains(response, "Descargar CSV historial")
 
 
 class WebUiBukReportAdminOverrideTests(TestCase):
@@ -5479,6 +5498,7 @@ class WebUiUsersPermissionsTests(TestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(name="Pariwana Hostels", slug="pariwana-hostels")
         self.property = Property.objects.create(tenant=self.tenant, name="Pariwana Cusco", slug="pariwana-cusco")
+        self.property_2 = Property.objects.create(tenant=self.tenant, name="Pariwana Lima", slug="pariwana-lima")
         self.area_1 = Area.objects.create(tenant=self.tenant, property=self.property, name="Recepcion")
         self.area_2 = Area.objects.create(tenant=self.tenant, property=self.property, name="Housekeeping")
         self.user = User.objects.create_user(email="users-admin@pariwana.test", password="StrongPass123")
@@ -5504,8 +5524,10 @@ class WebUiUsersPermissionsTests(TestCase):
         response = self.client.get(reverse("webui-users-permissions"))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Pariwana Cusco")
+        self.assertContains(response, "Pariwana Lima")
         self.assertContains(response, "Tipo de usuario")
-        self.assertContains(response, "El usuario se creara para la sede seleccionada arriba.")
+        self.assertContains(response, "Sedes permitidas")
+        self.assertContains(response, "Todas las sedes")
         self.assertNotContains(response, "Perfil de rol")
         self.assertNotContains(response, "Rol base")
 
@@ -5553,6 +5575,65 @@ class WebUiUsersPermissionsTests(TestCase):
                 can_schedule=True,
             ).exists()
         )
+
+    def test_create_admin_with_multiple_selected_properties(self):
+        self._activate_context()
+        response = self.client.post(
+            reverse("webui-users-permissions"),
+            {
+                "action": "create_user",
+                "email": "multi-admin@pariwana.test",
+                "password": "StrongPass123",
+                "first_name": "Multi",
+                "last_name": "Admin",
+                "role": "admin",
+                "property_ids": [str(self.property.id), str(self.property_2.id)],
+                "can_access": "on",
+                "can_manage_users": "on",
+                "can_export_buk": "on",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        created = User.objects.get(email="multi-admin@pariwana.test")
+        tenant_role = UserTenantRole.objects.get(user=created, tenant=self.tenant)
+        self.assertEqual(tenant_role.role, RoleChoices.ADMIN)
+        self.assertFalse(tenant_role.all_properties_access)
+        self.assertEqual(
+            set(UserPropertyPermission.objects.filter(user=created, tenant=self.tenant).values_list("property_id", flat=True)),
+            {self.property.id, self.property_2.id},
+        )
+
+    def test_create_operator_with_all_properties_access_reaches_future_property(self):
+        self._activate_context()
+        response = self.client.post(
+            reverse("webui-users-permissions"),
+            {
+                "action": "create_user",
+                "email": "all-operator@pariwana.test",
+                "password": "StrongPass123",
+                "first_name": "All",
+                "last_name": "Operator",
+                "role": "operator",
+                "all_properties_access": "on",
+                "property_ids": [str(self.property.id), str(self.property_2.id)],
+                "can_access": "on",
+                "can_schedule": "on",
+                "can_export_buk": "on",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        created = User.objects.get(email="all-operator@pariwana.test")
+        tenant_role = UserTenantRole.objects.get(user=created, tenant=self.tenant)
+        self.assertEqual(tenant_role.role, RoleChoices.OPERATOR)
+        self.assertTrue(tenant_role.all_properties_access)
+        self.assertTrue(tenant_role.property_permissions_template["can_schedule"])
+        future_property = Property.objects.create(
+            tenant=self.tenant,
+            name="Pariwana Miraflores",
+            slug="pariwana-miraflores",
+        )
+        self.assertIn(future_property.id, PermissionService.get_accessible_property_ids(created, self.tenant))
+        self.assertTrue(PermissionService.user_can_property_action(created, self.tenant, future_property, "can_schedule"))
 
     def test_create_role_profile_and_apply_defaults_to_user(self):
         self._activate_context()

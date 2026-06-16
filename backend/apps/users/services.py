@@ -99,6 +99,10 @@ class RoleProfileService:
 
 class PermissionService:
     @staticmethod
+    def _tenant_role_assignment(user, tenant):
+        return UserTenantRole.objects.filter(user=user, tenant=tenant).first()
+
+    @staticmethod
     def _area_permissions_for_user(user, tenant, property_obj):
         return UserAreaPermission.objects.filter(
             user=user,
@@ -114,14 +118,25 @@ class PermissionService:
     def get_user_role(user, tenant):
         if PermissionService.is_super_admin(user):
             return RoleChoices.SUPER_ADMIN
-        assignment = UserTenantRole.objects.filter(user=user, tenant=tenant).first()
+        assignment = PermissionService._tenant_role_assignment(user, tenant)
         return assignment.role if assignment else None
 
     @staticmethod
     def user_can_property_action(user, tenant, property_obj, action):
-        role = PermissionService.get_user_role(user, tenant)
+        if PermissionService.is_super_admin(user):
+            return True
+        assignment = PermissionService._tenant_role_assignment(user, tenant)
+        role = assignment.role if assignment else None
         if role in {RoleChoices.SUPER_ADMIN, RoleChoices.ADMIN}:
             return True
+        if (
+            role == RoleChoices.OPERATOR
+            and assignment
+            and assignment.all_properties_access
+            and property_obj.tenant_id == tenant.id
+        ):
+            template = RoleProfileService.normalize_permissions(assignment.property_permissions_template)
+            return bool(template.get(action))
 
         perm = UserPropertyPermission.objects.filter(
             user=user,
@@ -154,6 +169,14 @@ class PermissionService:
     def get_accessible_property_ids(user, tenant, action="can_access"):
         if PermissionService.is_super_admin(user):
             return list(Property.objects.filter(tenant=tenant).values_list("id", flat=True))
+        assignment = PermissionService._tenant_role_assignment(user, tenant)
+        if assignment and assignment.all_properties_access and assignment.role in {RoleChoices.ADMIN, RoleChoices.OPERATOR}:
+            if assignment.role == RoleChoices.ADMIN or action == "can_access":
+                return list(Property.objects.filter(tenant=tenant).values_list("id", flat=True))
+            template = RoleProfileService.normalize_permissions(assignment.property_permissions_template)
+            if template.get(action):
+                return list(Property.objects.filter(tenant=tenant).values_list("id", flat=True))
+            return []
         perms = UserPropertyPermission.objects.filter(
             user=user,
             tenant=tenant,
