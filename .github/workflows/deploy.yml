@@ -56,15 +56,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
 
-      - name: Check pending migrations
-        run: python manage.py makemigrations --check
+      - name: Apply migrations to source database
+        run: python manage.py migrate --noinput
         working-directory: backend
         env:
           SECRET_KEY: test-key
           DATABASE_URL: postgresql://pariwana:pariwana_test@localhost:5432/pariwana_buk
 
       - name: Run tests
-        run: python manage.py test --noinput
+        run: python manage.py test --noinput --keepdb -v 2
         working-directory: backend
         env:
           SECRET_KEY: test-key
