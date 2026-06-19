@@ -10,7 +10,12 @@ fi
 
 python manage.py migrate --noinput
 
-if [ "${BOOTSTRAP_DEMO_DATA:-1}" = "1" ]; then
+if [ "${COLLECTSTATIC:-0}" = "1" ]; then
+  echo "Collecting static files..."
+  python manage.py collectstatic --noinput
+fi
+
+if [ "${BOOTSTRAP_DEMO_DATA:-0}" = "1" ]; then
   python manage.py bootstrap_local_demo --password "${DEMO_PASSWORD:-Pariwana2026!}" --days "${DEMO_SCHEDULE_DAYS:-30}"
 fi
 

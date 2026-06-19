@@ -1,0 +1,158 @@
+# =============================================================================
+# Pariwana BUK Scheduler - CI/CD Pipeline
+# =============================================================================
+# Jobs: test → build → deploy
+# Cada job es independiente para mejor lectura de logs y detección de fallos.
+#
+# Se ejecuta al hacer push a main o manualmente (workflow_dispatch).
+# Despliega en /home/ubuntu/schedules con Nginx Proxy Manager (npm_network).
+#
+# Secretos requeridos en GitHub (Settings > Secrets and variables > Actions):
+#   Ver README.md para la lista completa.
+# =============================================================================
+
+name: Deploy to Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
+
+env:
+  COMPOSE_FILE: docker-compose.prod.yml
+  PROJECT_DIR: /home/ubuntu/schedules
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r backend/requirements.txt
+
+      - name: Check pending migrations
+        run: python manage.py makemigrations --check
+        working-directory: backend
+        env:
+          SECRET_KEY: test-key
+
+      - name: Run tests
+        run: python manage.py test --noinput
+        working-directory: backend
+        env:
+          SECRET_KEY: test-key
+          DEBUG: "False"
+          DATABASE_URL: ""
+
+  build:
+    name: Build Docker image
+    needs: test
+    runs-on: ubuntu-latest
+    if: success() && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Write .env from secret
+        run: echo "$DEPLOY_ENV_FILE" > /tmp/.env.prod
+        env:
+          DEPLOY_ENV_FILE: ${{ secrets.DEPLOY_ENV_FILE }}
+
+      - name: Ensure remote directory exists
+        run: |
+          ssh -p ${{ secrets.SSH_PORT || 22 }} \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+            "mkdir -p ${{ env.PROJECT_DIR }}"
+
+      - name: Sync project files to server
+        run: |
+          rsync -avz --delete \
+            --exclude '.git' \
+            --exclude '.env' \
+            --exclude '__pycache__' \
+            --exclude '*.pyc' \
+            --exclude '.venv' \
+            --exclude 'venv' \
+            --exclude 'node_modules' \
+            --exclude 'backend/media' \
+            --exclude 'backend/staticfiles' \
+            -e "ssh -p ${{ secrets.SSH_PORT || 22 }}" \
+            ./ ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ env.PROJECT_DIR }}/
+
+      - name: Copy .env to server
+        run: |
+          scp -P ${{ secrets.SSH_PORT || 22 }} \
+            /tmp/.env.prod \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ env.PROJECT_DIR }}/.env
+
+      - name: Build Docker image on server
+        run: |
+          ssh -p ${{ secrets.SSH_PORT || 22 }} \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+            "cd ${{ env.PROJECT_DIR }} && \
+             docker compose -f ${{ env.COMPOSE_FILE }} build --pull"
+
+  deploy:
+    name: Deploy and health check
+    needs: build
+    runs-on: ubuntu-latest
+    if: success() && github.ref == 'refs/heads/main'
+    steps:
+      - name: Setup SSH
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Add server to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Start containers
+        run: |
+          ssh -p ${{ secrets.SSH_PORT || 22 }} \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+            "cd ${{ env.PROJECT_DIR }} && \
+             docker compose -f ${{ env.COMPOSE_FILE }} up -d"
+
+      - name: Health check
+        run: |
+          ssh -p ${{ secrets.SSH_PORT || 22 }} \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+            "cd ${{ env.PROJECT_DIR }} && \
+             echo 'Waiting for health check...' && \
+             sleep 5 && \
+             STATUS=\$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/health/ || echo '000') && \
+             if [ \"\$STATUS\" != \"200\" ]; then \
+               echo 'ERROR: Health check failed (HTTP '\$STATUS')'; \
+               docker compose -f ${{ env.COMPOSE_FILE }} logs --tail=50 web; \
+               exit 1; \
+             fi && \
+             echo 'Deploy successful! Health check returned HTTP '\$STATUS"
+
+      - name: Cleanup old Docker resources
+        run: |
+          ssh -p ${{ secrets.SSH_PORT || 22 }} \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }} \
+            "docker image prune -f && docker container prune -f"

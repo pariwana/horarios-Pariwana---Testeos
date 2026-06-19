@@ -1,0 +1,51 @@
+# =============================================================================
+# Pariwana BUK Scheduler - Producción
+# =============================================================================
+# Uso:
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Asume:
+#   - Base de datos PostgreSQL externa (Supabase u otro proveedor).
+#   - Nginx Proxy Manager como reverse proxy con network "npm_network".
+#   - Archivo .env en el mismo directorio con las variables de entorno.
+#
+# Para construir y desplegar:
+#   docker compose -f docker-compose.prod.yml build
+#   docker compose -f docker-compose.prod.yml up -d
+# =============================================================================
+
+services:
+  web:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pariwana_scheduler_web
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      ENVIRONMENT: production
+      BOOTSTRAP_DEMO_DATA: "0"
+      COLLECTSTATIC: "1"
+    command: >
+      gunicorn config.wsgi:application
+        --bind 0.0.0.0:8000
+        --workers ${GUNICORN_WORKERS:-4}
+        --timeout ${GUNICORN_TIMEOUT:-120}
+        --access-logfile -
+        --error-logfile -
+    volumes:
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    expose:
+      - "8000"
+    networks:
+      - npm_network
+
+volumes:
+  static_volume:
+  media_volume:
+
+networks:
+  npm_network:
+    external: true
