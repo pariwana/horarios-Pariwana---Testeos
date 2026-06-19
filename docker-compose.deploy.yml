@@ -1,0 +1,14 @@
+# =============================================================================
+# Pariwana BUK Scheduler - Deploy override (ghcr.io)
+# =============================================================================
+# Usado por GitHub Actions para deploy automático.
+# El CI genera este archivo con la imagen real de ghcr.io.
+#
+# Para uso manual, reemplazar IMAGEN por el tag deseado:
+#   docker compose -f docker-compose.prod.yml -f docker-compose.deploy.yml pull
+#   docker compose -f docker-compose.prod.yml -f docker-compose.deploy.yml up -d
+# =============================================================================
+
+services:
+  web:
+    image: ghcr.io/org/repo:latest

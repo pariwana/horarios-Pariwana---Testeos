@@ -153,6 +153,7 @@ SECRET_KEY=<generar clave única>
 DEBUG=False
 ENVIRONMENT=production
 ALLOWED_HOSTS=.tudominio.com,localhost
+# Usar puerto 5432 directo (sin PgBouncer). NO usar ?pgbouncer=true
 DATABASE_URL=postgresql://usuario:password@host:5432/pariwana_buk?sslmode=require
 DIRECT_URL=
 TIME_ZONE=America/Lima
