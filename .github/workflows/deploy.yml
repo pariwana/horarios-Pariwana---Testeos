@@ -30,6 +30,20 @@ jobs:
   test:
     name: Tests
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: pariwana_buk
+          POSTGRES_USER: pariwana
+          POSTGRES_PASSWORD: pariwana_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready -U pariwana -d pariwana_buk
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
 
@@ -47,6 +61,7 @@ jobs:
         working-directory: backend
         env:
           SECRET_KEY: test-key
+          DATABASE_URL: postgresql://pariwana:pariwana_test@localhost:5432/pariwana_buk
 
       - name: Run tests
         run: python manage.py test --noinput
@@ -54,7 +69,7 @@ jobs:
         env:
           SECRET_KEY: test-key
           DEBUG: "False"
-          DATABASE_URL: ""
+          DATABASE_URL: postgresql://pariwana:pariwana_test@localhost:5432/pariwana_buk
 
   build:
     name: Build Docker image
