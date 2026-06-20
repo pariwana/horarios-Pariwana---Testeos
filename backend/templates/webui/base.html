@@ -18,7 +18,11 @@
     body { margin: 0; font-family: Arial, sans-serif; color: var(--ink); background: var(--bg); }
     .layout { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
     .sidebar { background: #0b1220; color: #e5e7eb; padding: 18px 14px; }
+    .sidebar-header { display: block; }
     .brand { font-size: 16px; font-weight: 700; margin-bottom: 18px; }
+    .mobile-property-switch,
+    .mobile-nav-actions { display: none; }
+    .mobile-menu-toggle { display: none; }
     .nav a { display: block; color: #e5e7eb; text-decoration: none; padding: 10px; border-radius: 6px; margin-bottom: 4px; }
     .nav a:hover { background: #1f2937; }
     .nav a.active { background: var(--accent); color: #ffffff; font-weight: 700; }
@@ -98,17 +102,37 @@
     .modal-close { border: 0; background: transparent; font-size: 20px; padding: 4px 8px; }
     @media (max-width: 980px) {
       .layout { grid-template-columns: 1fr; }
-      .sidebar { padding: 12px; position: sticky; top: 0; z-index: 20; }
-      .brand { margin-bottom: 10px; }
-      .nav { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; scrollbar-width: thin; }
-      .nav a { margin-bottom: 0; white-space: nowrap; }
-      .nav-group { flex: 0 0 auto; position: relative; }
+      .sidebar { padding: 10px 12px; position: sticky; top: 0; z-index: 20; box-shadow: 0 1px 0 rgba(255,255,255,0.08); }
+      .sidebar-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+      .brand { margin-bottom: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .mobile-property-switch { display: block; flex: 1 1 120px; min-width: 0; max-width: 180px; margin-left: auto; }
+      .mobile-property-switch form { margin: 0; }
+      .mobile-property-switch select { width: 100%; min-width: 0; height: 34px; padding: 6px 28px 6px 8px; border-color: #334155; background: #111827; color: #e5e7eb; font-size: 12px; }
+      .mobile-menu-toggle { width: 40px; height: 36px; min-width: 40px; padding: 0; border-color: #334155; background: #111827; color: #e5e7eb; display: inline-flex; align-items: center; justify-content: center; flex-direction: column; gap: 4px; }
+      .mobile-menu-toggle span { display: block; width: 18px; height: 2px; border-radius: 999px; background: currentColor; }
+      .nav { display: none; margin-top: 10px; padding-top: 10px; border-top: 1px solid #1f2937; }
+      .sidebar.nav-open .nav { display: grid; gap: 4px; }
+      .nav a { margin-bottom: 0; white-space: normal; }
+      .nav-group { position: relative; margin-bottom: 0; }
       .nav-group a { margin-left: 0; }
+      .nav-group[open] { display: grid; gap: 4px; }
+      .nav-group[open] a { margin-left: 10px; }
+      .mobile-nav-actions { display: grid; gap: 8px; margin-top: 8px; padding-top: 8px; border-top: 1px solid #1f2937; }
+      .mobile-nav-actions form { margin: 0; display: grid; gap: 8px; }
+      .mobile-nav-actions label { color: #cbd5e1; }
+      .mobile-nav-actions select,
+      .mobile-nav-actions button { width: 100%; min-width: 0; }
+      .mobile-nav-user { color: #cbd5e1; font-size: 12px; line-height: 1.3; }
+      .mobile-nav-user strong { display: block; color: #f8fafc; font-size: 13px; margin-top: 2px; }
+      .topbar { display: none; }
       .grid-2 { grid-template-columns: 1fr; }
       .ops-layout { grid-template-columns: 1fr; }
       .drawer-panel { position: static; }
     }
     @media (max-width: 640px) {
+      html, body { width: 100%; max-width: 100%; overflow-x: hidden; }
+      .layout, .main, .sidebar, .panel, .page-header, .mobile-card, .modal-body { max-width: 100%; min-width: 0; }
+      .main > *, .panel > *, form, details, summary { max-width: 100%; min-width: 0; }
       .main { padding: 10px; }
       .topbar { align-items: stretch; }
       .topbar-context-form { width: 100%; display: grid; grid-template-columns: 1fr; }
@@ -127,9 +151,12 @@
       input[type="file"] { width: 100%; min-width: 0; }
       .panel { padding: 12px; border-radius: 6px; }
       .kpi { font-size: 22px; }
-      table { min-width: 680px; }
+      table { min-width: 0; }
+      .ops-list { max-width: 100%; overflow-x: auto; }
+      .ops-list table { width: max-content; min-width: 100%; }
       .page-header { align-items: stretch; }
       .page-header h1, .page-header h2 { font-size: 20px; }
+      .section-title { min-width: 0; overflow-wrap: anywhere; }
       .page-actions, .page-actions .button, .page-actions button { width: 100%; }
       .filters-bar { display: grid; grid-template-columns: 1fr; }
       .form-grid { grid-template-columns: 1fr; }
@@ -145,9 +172,31 @@
 </head>
 <body>
   <div class="layout">
-    <aside class="sidebar">
-      <div class="brand">Pariwana Scheduler</div>
-      <nav class="nav">
+    <aside class="sidebar" id="app-sidebar">
+      <div class="sidebar-header">
+        <div class="brand">Pariwana Scheduler</div>
+        {% if property_options|length > 1 %}
+          <div class="mobile-property-switch">
+            <form method="post" action="/app/context/">
+              {% csrf_token %}
+              <input type="hidden" name="next" value="{{ request.path }}">
+              {% if selected_tenant %}<input type="hidden" name="tenant_id" value="{{ selected_tenant.id }}">{% endif %}
+              {% if support_session %}<input type="hidden" name="support_session_id" value="{{ support_session.id }}">{% endif %}
+              <select name="property_id" aria-label="Cambiar sede" onchange="this.form.submit()">
+                {% for property in property_options %}
+                  <option value="{{ property.id }}" {% if selected_property and selected_property.id == property.id %}selected{% endif %}>{{ property.name }}</option>
+                {% endfor %}
+              </select>
+            </form>
+          </div>
+        {% endif %}
+        <button class="mobile-menu-toggle" type="button" aria-label="Abrir menu" aria-expanded="false" aria-controls="main-nav" data-mobile-menu-toggle>
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
+      </div>
+      <nav class="nav" id="main-nav">
         {% for item in nav_items %}
           {% if item.children %}
             <details class="nav-group {% if item.active %}active{% endif %}" {% if item.active %}open{% endif %}>
@@ -160,6 +209,42 @@
             <a href="{{ item.url }}" class="{% if item.active %}active{% endif %}">{{ item.label }}</a>
           {% endif %}
         {% endfor %}
+        <div class="mobile-nav-actions">
+          {% if user.is_super_admin %}
+            <form method="post" action="/app/context/">
+              {% csrf_token %}
+              <input type="hidden" name="next" value="{{ request.path }}">
+              {% if selected_tenant %}<input type="hidden" name="tenant_id" value="{{ selected_tenant.id }}">{% endif %}
+              {% if selected_property %}<input type="hidden" name="property_id" value="{{ selected_property.id }}">{% endif %}
+              <div>
+                <label>Sesion Soporte</label>
+                <select name="support_session_id">
+                  <option value="">Sin soporte</option>
+                  {% for session in support_sessions %}
+                    <option value="{{ session.id }}" {% if support_session and support_session.id == session.id %}selected{% endif %}>
+                      #{{ session.id }} - {{ session.tenant.name }}{% if session.property %} / {{ session.property.name }}{% endif %}
+                    </option>
+                  {% endfor %}
+                </select>
+              </div>
+              <button class="primary" type="submit">Aplicar soporte</button>
+            </form>
+          {% endif %}
+          <div class="mobile-nav-user" title="{{ user.email }}">
+            Usuario
+            <strong>
+              {% if user.first_name or user.last_name %}
+                {{ user.first_name }} {{ user.last_name }}
+              {% else %}
+                {{ user.email }}
+              {% endif %}
+            </strong>
+          </div>
+          <form method="post" action="/app/logout/">
+            {% csrf_token %}
+            <button type="submit">Salir</button>
+          </form>
+        </div>
       </nav>
     </aside>
     <main class="main">
@@ -258,6 +343,15 @@
           if (event.target === modal) modal.close();
         });
       });
+      var sidebar = document.getElementById("app-sidebar");
+      var menuToggle = document.querySelector("[data-mobile-menu-toggle]");
+      if (sidebar && menuToggle) {
+        menuToggle.addEventListener("click", function () {
+          var isOpen = sidebar.classList.toggle("nav-open");
+          menuToggle.setAttribute("aria-expanded", isOpen ? "true" : "false");
+          menuToggle.setAttribute("aria-label", isOpen ? "Cerrar menu" : "Abrir menu");
+        });
+      }
     })();
   </script>
 </body>

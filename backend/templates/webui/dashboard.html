@@ -26,18 +26,21 @@
     @media (max-width: 560px) {
       .dashboard-kpis { grid-template-columns: 1fr; }
     }
+    @media (max-width: 640px) {
+      .dashboard-mobile-hidden { display: none; }
+    }
   </style>
 
   {% if user.is_super_admin and system_stats %}
     <section class="panel" style="margin-bottom: 12px;">
       <h3 style="margin-top: 0;">Estado general del sistema</h3>
       <div class="dashboard-kpis">
-        <div class="dashboard-kpi">
+        <div class="dashboard-kpi dashboard-mobile-hidden">
           <div class="muted">Tenants activos</div>
           <div class="kpi">{{ system_stats.active_tenants }}</div>
           <div class="muted">de {{ system_stats.tenants }} registrados</div>
         </div>
-        <div class="dashboard-kpi">
+        <div class="dashboard-kpi dashboard-mobile-hidden">
           <div class="muted">Sedes activas</div>
           <div class="kpi">{{ system_stats.active_properties }}</div>
           <div class="muted">de {{ system_stats.properties }} registradas</div>
@@ -47,17 +50,17 @@
           <div class="kpi">{{ system_stats.workers }}</div>
           <div class="muted">En todos los tenants</div>
         </div>
-        <div class="dashboard-kpi">
+        <div class="dashboard-kpi dashboard-mobile-hidden">
           <div class="muted">Soporte activo</div>
           <div class="kpi">{{ system_stats.active_support_sessions }}</div>
           <div class="muted">Sesiones abiertas</div>
         </div>
-        <div class="dashboard-kpi">
+        <div class="dashboard-kpi dashboard-mobile-hidden">
           <div class="muted">Modulos deshabilitados</div>
           <div class="kpi">{{ system_stats.disabled_modules }}</div>
           <div class="muted">Configuraciones por tenant</div>
         </div>
-        <div class="dashboard-kpi">
+        <div class="dashboard-kpi dashboard-mobile-hidden">
           <div class="muted">Eventos auditados</div>
           <div class="kpi">{{ system_stats.recent_audits }}</div>
           <div class="muted">Total registrado</div>
@@ -134,7 +137,7 @@
       <div class="muted">En sede seleccionada</div>
     </section>
   </div>
-  <section class="panel" style="margin-top: 12px;">
+  <section class="panel dashboard-mobile-hidden" style="margin-top: 12px;">
     <h3 style="margin: 0 0 8px;">Contexto actual</h3>
     <div class="muted">
       Tenant: {% if selected_tenant %}{{ selected_tenant.name }}{% else %}-{% endif %}<br>

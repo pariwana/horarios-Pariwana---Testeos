@@ -1,14 +1,31 @@
 {% extends "webui/base.html" %}
 {% block title %}Roles y permisos - Pariwana Scheduler{% endblock %}
 {% block content %}
+  <style>
+    .mobile-role-create-action {
+      display: none;
+      margin-bottom: 12px;
+    }
+    @media (max-width: 640px) {
+      .desktop-role-create-action {
+        display: none;
+      }
+      .mobile-role-create-action {
+        display: block;
+      }
+      .mobile-role-create-action button {
+        width: 100%;
+      }
+    }
+  </style>
   <div class="page-header">
     <div>
       <h1 class="section-title">Roles y permisos <span class="info-dot" title="Aqui gestionas usuarios, tipos de usuario y permisos por sede o area.">i</span></h1>
       <p class="compact-note">Gestiona usuarios, tipos de usuario y permisos por sede o area.</p>
     </div>
     <div class="page-actions">
-      <button class="primary" type="button" data-open-modal="role-create-modal">+ Nuevo tipo</button>
-      <button type="button" data-open-modal="user-create-modal">+ Nuevo usuario</button>
+      <button class="primary" type="button" data-open-modal="user-create-modal">+ Nuevo usuario</button>
+      <button class="desktop-role-create-action" type="button" data-open-modal="role-create-modal">+ Nuevo tipo</button>
     </div>
   </div>
 
@@ -101,6 +118,10 @@
       <p class="muted">No hay usuarios con permisos en esta sede.</p>
     {% endif %}
   </section>
+
+  <div class="mobile-role-create-action">
+    <button class="primary" type="button" data-open-modal="role-create-modal">+ Nuevo tipo</button>
+  </div>
 
   <section class="panel ops-list">
     <h3 style="margin-top: 0;">Tipos de usuario configurados</h3>

@@ -11,6 +11,12 @@
     @media (max-width: 760px) {
       .buk-hero { grid-template-columns: 1fr; }
       .buk-download-actions, .buk-download-actions button, .buk-download-actions select { width: 100%; }
+      .buk-preview-submit,
+      .advanced-section,
+      .buk-status,
+      .buk-format-field {
+        display: none;
+      }
     }
   </style>
   <div class="page-header">
@@ -26,7 +32,7 @@
         <div class="form-grid">
           <div>
             <label>Sede</label>
-            <select name="property_id">
+            <select name="property_id" data-buk-filter-property>
               {% for property in property_options %}
                 <option value="{{ property.id }}" {% if selected_property and selected_property.id == property.id %}selected{% endif %}>{{ property.name }}</option>
               {% endfor %}
@@ -34,14 +40,14 @@
           </div>
           <div>
             <label>Desde</label>
-            <input type="date" name="date_from" value="{{ date_from }}">
+            <input type="date" name="date_from" value="{{ date_from }}" data-buk-filter-date-from>
           </div>
           <div>
             <label>Hasta</label>
-            <input type="date" name="date_to" value="{{ date_to }}">
+            <input type="date" name="date_to" value="{{ date_to }}" data-buk-filter-date-to>
           </div>
         </div>
-        <button class="primary" type="submit">Validar vista previa</button>
+        <button class="primary buk-preview-submit" type="submit">Validar vista previa</button>
       </div>
 
       <details class="advanced-section">
@@ -77,19 +83,19 @@
       </div>
     {% endif %}
     {% if can_export_buk and module_export_enabled %}
-      <form method="post" action="/app/buk-report/" class="buk-download-actions" style="margin-top: 12px;">
+      <form method="post" action="/app/buk-report/" class="buk-download-actions" style="margin-top: 12px;" data-buk-export-form>
         {% csrf_token %}
         <input type="hidden" name="action" value="export">
-        <input type="hidden" name="property_id" value="{{ selected_property.id }}">
-        <input type="hidden" name="date_from" value="{{ date_from }}">
-        <input type="hidden" name="date_to" value="{{ date_to }}">
+        <input type="hidden" name="property_id" value="{{ selected_property.id }}" data-buk-export-property>
+        <input type="hidden" name="date_from" value="{{ date_from }}" data-buk-export-date-from>
+        <input type="hidden" name="date_to" value="{{ date_to }}" data-buk-export-date-to>
         {% for area_id in selected_area_ids %}
           <input type="hidden" name="area_ids" value="{{ area_id }}">
         {% endfor %}
         {% for worker_id in selected_worker_ids %}
           <input type="hidden" name="worker_ids" value="{{ worker_id }}">
         {% endfor %}
-        <div>
+        <div class="buk-format-field">
           <label>Formato</label>
           <select name="format">
             <option value="xlsx">XLSX</option>
@@ -186,4 +192,21 @@
       </tbody>
     </table>
   </section>
+  <script>
+    (function () {
+      var exportForm = document.querySelector("[data-buk-export-form]");
+      if (!exportForm) return;
+      exportForm.addEventListener("submit", function () {
+        var propertyFilter = document.querySelector("[data-buk-filter-property]");
+        var dateFromFilter = document.querySelector("[data-buk-filter-date-from]");
+        var dateToFilter = document.querySelector("[data-buk-filter-date-to]");
+        var propertyInput = exportForm.querySelector("[data-buk-export-property]");
+        var dateFromInput = exportForm.querySelector("[data-buk-export-date-from]");
+        var dateToInput = exportForm.querySelector("[data-buk-export-date-to]");
+        if (propertyFilter && propertyInput) propertyInput.value = propertyFilter.value;
+        if (dateFromFilter && dateFromInput) dateFromInput.value = dateFromFilter.value;
+        if (dateToFilter && dateToInput) dateToInput.value = dateToFilter.value;
+      });
+    })();
+  </script>
 {% endblock %}

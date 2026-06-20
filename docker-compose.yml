@@ -37,7 +37,6 @@ services:
       TIME_ZONE: America/Lima
       BUK_EXPORT_DEFAULT_FORMAT: xlsx
       BUK_DEFAULT_SHEET_NAME: Reporte carga BUK
-      COLLECTSTATIC: "0"
       BOOTSTRAP_DEMO_DATA: "1"
       DEMO_PASSWORD: Pariwana2026!
       DEMO_SCHEDULE_DAYS: "30"
