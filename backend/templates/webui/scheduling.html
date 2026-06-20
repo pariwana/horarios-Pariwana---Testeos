@@ -465,6 +465,40 @@
       .scheduling-mobile-list .assignment-cell-actions {
         margin-top: 2px;
       }
+      #copy-assignment-modal.modal-dialog {
+        width: min(420px, calc(100vw - 32px));
+        height: fit-content;
+        min-height: 0;
+        max-height: none;
+        border: 1px solid #d1d5db;
+        border-radius: 10px;
+        margin: auto;
+        box-shadow: 0 20px 55px rgba(15, 23, 42, 0.36);
+        overflow: visible;
+      }
+      #copy-assignment-modal .modal-header {
+        padding: 12px 14px;
+      }
+      #copy-assignment-modal .modal-header h3 {
+        font-size: 16px;
+      }
+      #copy-assignment-modal .modal-body {
+        max-height: none;
+        min-height: 0;
+        padding: 12px 14px 14px;
+        overflow: visible;
+      }
+      #copy-assignment-modal .grid-2 {
+        gap: 8px;
+      }
+      #copy-assignment-modal .modal-actions {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
+      #copy-assignment-modal .modal-actions button {
+        width: 100%;
+      }
     }
     @media (max-width: 460px) {
       .mobile-day-grid {
