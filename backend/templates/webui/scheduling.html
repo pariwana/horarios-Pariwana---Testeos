@@ -221,6 +221,24 @@
       font-weight: 700;
     }
     .worker-card[open] .worker-card-header::after { content: "-"; }
+    .worker-card-status,
+    .mobile-week-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      margin-left: auto;
+    }
+    .assignment-missing-dot {
+      width: 9px;
+      height: 9px;
+      min-width: 9px;
+      border-radius: 999px;
+      background: #dc2626;
+      box-shadow: 0 0 0 2px #fee2e2;
+    }
+    .assignment-missing-dot[hidden] {
+      display: none;
+    }
     .mobile-area-heading {
       margin: 14px 0 8px;
       font-size: 12px;
@@ -241,6 +259,9 @@
       background: #ffffff;
     }
     .mobile-week-summary {
+      display: flex;
+      align-items: center;
+      gap: 8px;
       cursor: pointer;
       list-style: none;
       padding: 9px 10px;
@@ -252,7 +273,6 @@
     .mobile-week-summary::-webkit-details-marker { display: none; }
     .mobile-week-summary::after {
       content: "+";
-      float: right;
       color: #6b7280;
     }
     .mobile-week-group[open] .mobile-week-summary::after { content: "-"; }
@@ -1466,23 +1486,30 @@
         {% ifchanged row.worker.area.name %}
           <div class="mobile-area-heading">{{ row.worker.area.name }}</div>
         {% endifchanged %}
-        <details class="worker-card">
+        <details class="worker-card" data-mobile-worker-card>
           <summary class="worker-card-header">
             <div>
               <div class="worker-name">{{ row.worker.last_name }}, {{ row.worker.first_name }}</div>
               <span class="worker-subtitle">{{ row.worker.document_number }} - {{ row.worker.area.name }}</span>
             </div>
-            {% if not row.area_allowed %}
-              <span class="scheduling-pill">Solo lectura</span>
-            {% endif %}
+            <span class="worker-card-status">
+              <span class="assignment-missing-dot" title="Tiene horarios pendientes" {% if not row.has_missing_assignments %}hidden{% endif %}></span>
+              {% if not row.area_allowed %}
+                <span class="scheduling-pill">Solo lectura</span>
+              {% endif %}
+            </span>
           </summary>
           <div class="mobile-worker-weeks">
-            {% for cell in row.cells %}
-              {% if forloop.counter0|divisibleby:7 %}
-                <details class="mobile-week-group">
-                  <summary class="mobile-week-summary">Semana desde {{ cell.date|date:'d/m' }}</summary>
+            {% for week in row.mobile_weeks %}
+                <details class="mobile-week-group" data-mobile-week-group>
+                  <summary class="mobile-week-summary">
+                    <span>Semana desde {{ week.label }}</span>
+                    <span class="mobile-week-status">
+                      <span class="assignment-missing-dot" title="Semana incompleta" {% if not week.has_missing_assignments %}hidden{% endif %}></span>
+                    </span>
+                  </summary>
                   <div class="mobile-day-grid">
-              {% endif %}
+              {% for cell in week.cells %}
                     <div class="mobile-day-cell {% if cell.is_weekend %}is-weekend{% endif %} {% if cell.is_night %}is-night{% endif %} {% if cell.is_focus %}focus-day-cell{% endif %} {% if cell.is_recent_edit %}recent-edit-cell{% endif %}">
                       <div class="mobile-day-label">
                         <strong>{{ cell.day }} {{ cell.weekday_label }}</strong>
@@ -1530,10 +1557,9 @@
                         <span class="assignment-code {% if not cell.display_code %}is-empty{% endif %}">{{ cell.display_code|default:'-' }}</span>
                       {% endif %}
                     </div>
-              {% if forloop.counter|divisibleby:7 or forloop.last %}
+              {% endfor %}
                   </div>
                 </details>
-              {% endif %}
             {% endfor %}
           </div>
         </details>
@@ -1597,6 +1623,27 @@
       }
       propagateParamToPostForms("worker_q");
       propagateParamToPostForms("focus_date");
+
+      function setDotVisibility(container, hasMissing) {
+        if (!container) return;
+        var dot = container.querySelector(":scope > summary .assignment-missing-dot");
+        if (dot) dot.hidden = !hasMissing;
+      }
+
+      function refreshMobileMissingIndicators() {
+        document.querySelectorAll("[data-mobile-week-group]").forEach(function (week) {
+          var hasMissing = Array.prototype.some.call(week.querySelectorAll(".assignment-code"), function (code) {
+            return code.classList.contains("is-empty");
+          });
+          setDotVisibility(week, hasMissing);
+        });
+        document.querySelectorAll("[data-mobile-worker-card]").forEach(function (card) {
+          var hasMissing = Array.prototype.some.call(card.querySelectorAll("[data-mobile-week-group] > summary .assignment-missing-dot"), function (dot) {
+            return !dot.hidden;
+          });
+          setDotVisibility(card, hasMissing);
+        });
+      }
 
       var focusDate = params.get("focus_date") || "";
       if (focusDate) {
@@ -1672,6 +1719,7 @@
                 }
               }
               select.setAttribute("data-last-value", payload.assignment_value || select.value || "");
+              refreshMobileMissingIndicators();
               setState("is-saved", "Guardado");
               window.setTimeout(function () {
                 if (currentToken === requestToken && form.classList.contains("is-saved")) {

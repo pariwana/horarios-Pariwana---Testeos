@@ -1785,11 +1785,23 @@ def scheduling_page(request):
                     "state_options": states,
                 }
             )
+        mobile_weeks = []
+        for index in range(0, len(row_cells), 7):
+            week_cells = row_cells[index : index + 7]
+            mobile_weeks.append(
+                {
+                    "label": week_cells[0]["date"].strftime("%d/%m") if week_cells else "",
+                    "has_missing_assignments": any(not cell["display_code"] for cell in week_cells),
+                    "cells": week_cells,
+                }
+            )
         rows.append(
             {
                 "worker": worker,
                 "area_allowed": area_allowed,
                 "cells": row_cells,
+                "mobile_weeks": mobile_weeks,
+                "has_missing_assignments": any(not cell["display_code"] for cell in row_cells),
             }
         )
     bulk_worker_options = [row["worker"] for row in rows if row["area_allowed"]]
