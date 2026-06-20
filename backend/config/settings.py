@@ -6,6 +6,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 env = environ.Env(
     DEBUG=(bool, False),
     ALLOWED_HOSTS=(list, []),
+    CSRF_TRUSTED_ORIGINS=(list, []),
     EMAIL_PORT=(int, 587),
 )
 environ.Env.read_env(BASE_DIR / ".env")
@@ -14,6 +15,7 @@ SECRET_KEY = env("SECRET_KEY", default="unsafe-dev-key-change-me")
 DEBUG = env("DEBUG")
 ENVIRONMENT = env("ENVIRONMENT", default="development")
 ALLOWED_HOSTS = env("ALLOWED_HOSTS")
+CSRF_TRUSTED_ORIGINS = env("CSRF_TRUSTED_ORIGINS")
 
 INSTALLED_APPS = [
     "django.contrib.admin",

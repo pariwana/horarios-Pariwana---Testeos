@@ -73,6 +73,7 @@ Solo estas variables se usan realmente. Referencia cruzada: `backend/config/sett
 | `DEBUG` | ✅ | `False` en producción |
 | `ENVIRONMENT` | ❌ (default `development`) | Entorno actual |
 | `ALLOWED_HOSTS` | ✅ | Hosts/dominios permitidos (separados por coma) |
+| `CSRF_TRUSTED_ORIGINS` | ✅ | Orígenes confiables para CSRF (separados por coma, ej: `https://.tudominio.com,https://localhost`) |
 | `DATABASE_URL` | ✅ | URL completa de PostgreSQL |
 | `DIRECT_URL` | ❌ | Conexión directa a PostgreSQL (sin PgBouncer) |
 | `TIME_ZONE` | ❌ (default `America/Lima`) | Zona horaria |
@@ -153,6 +154,7 @@ SECRET_KEY=<generar clave única>
 DEBUG=False
 ENVIRONMENT=production
 ALLOWED_HOSTS=.tudominio.com,localhost
+CSRF_TRUSTED_ORIGINS=https://.tudominio.com,https://localhost
 # Usar puerto 5432 directo (sin PgBouncer). NO usar ?pgbouncer=true
 DATABASE_URL=postgresql://usuario:password@host:5432/pariwana_buk?sslmode=require
 DIRECT_URL=
@@ -180,12 +182,63 @@ docker compose -f docker-compose.prod.yml up -d
 
 ### Nginx Proxy Manager
 
-1. Agregar un nuevo Proxy Host en NPM.
-2. Domain: `tudominio.com`
-3. Forward Hostname: `pariwana_scheduler_web`
-4. Forward Port: `8000`
-5. Scheme: `http`
-6. SSL: Solicitar certificado Let's Encrypt.
+El proyecto está diseñado para funcionar detrás de **Nginx Proxy Manager (NPM)**
+usando la red externa `npm_network`.
+
+#### Requisitos
+
+- NPM debe estar corriendo con la red `npm_network` creada:
+  ```bash
+  docker network create npm_network
+  ```
+- El contenedor `pariwana_scheduler_web` se conecta automáticamente a `npm_network`
+  al levantar `docker compose -f docker-compose.prod.yml up -d`.
+
+#### Configuración paso a paso
+
+1. Ingresar al panel de Nginx Proxy Manager (`http://tu-servidor:81`).
+
+2. Ir a **Proxy Hosts** → **Add Proxy Host**.
+
+3. Llenar los campos:
+
+   | Campo | Valor |
+   |-------|-------|
+   | **Domain Names** | `tudominio.com` (o el dominio que apunte a tu servidor) |
+   | **Scheme** | `http` |
+   | **Forward Hostname** | `pariwana_scheduler_web` |
+   | **Forward Port** | `8000` |
+   | **Cache Assets** | Opcional |
+   | **Block Common Exploits** | ✅ Recomendado |
+   | **Websocket Support** | ❌ No necesario |
+
+4. Ir a la pestaña **SSL**:
+   - **SSL Certificate**: Solicitar un nuevo certificado Let's Encrypt.
+   - **Force SSL**: ✅
+   - **HTTP/2 Support**: ✅ Recomendado
+   - **Email for Let's Encrypt**: tu-email@dominio.com
+   - **Agree to Let's Encrypt Terms of Service**: ✅
+
+5. Guardar.
+
+#### Verificar que funciona
+
+```bash
+# El contenedor debe estar en la red npm_network
+docker inspect pariwana_scheduler_web --format='{{json .NetworkSettings.Networks.npm_network}}'
+
+# Probar el health check desde el servidor
+curl -I https://tudominio.com/health/
+# Debe responder HTTP/2 200
+```
+
+#### Solución de problemas
+
+| Síntoma | Causa probable | Solución |
+|---------|---------------|----------|
+| `502 Bad Gateway` | NPM no encuentra el contenedor | Verificar que `pariwana_scheduler_web` existe y está en `npm_network` |
+| `Connection Refused` | Gunicorn no arrancó | Revisar logs: `docker compose -f docker-compose.prod.yml logs web` |
+| SSL no se emite | DNS no apunta al servidor | Verificar registro A del dominio apuntando a la IP del servidor |
 
 ---
 
