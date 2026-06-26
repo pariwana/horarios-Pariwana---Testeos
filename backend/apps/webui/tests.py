@@ -2155,6 +2155,36 @@ class WebUiSchedulingTests(TestCase):
         self.assertEqual(response["Content-Type"], "application/pdf")
         self.assertTrue(response.content.startswith(b"%PDF"))
 
+    def test_scheduling_team_report_pdf_accepts_month_range(self):
+        for day in range(1, 31):
+            ScheduleAssignment.objects.create(
+                tenant=self.tenant,
+                property=self.property,
+                worker=self.worker,
+                date=date(2026, 6, day),
+                shift=self.shift,
+                created_by=self.user,
+                updated_by=self.user,
+            )
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+
+        response = self.client.get(
+            reverse("webui-scheduling-team-report-pdf"),
+            {
+                "date_from": "2026-06-01",
+                "date_to": "2026-06-30",
+                "area_id": str(self.area.id),
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertTrue(response.content.startswith(b"%PDF"))
+
     def test_scheduling_bulk_state_respects_worker_query_filter(self):
         Worker.objects.create(
             tenant=self.tenant,
@@ -5757,6 +5787,78 @@ class WebUiUsersPermissionsTests(TestCase):
             ).exists()
         )
 
+    def test_update_user_adds_multiple_properties_and_renders_permissions(self):
+        target = User.objects.create_user(email="target-properties@pariwana.test", password="StrongPass123")
+        UserTenantRole.objects.create(user=target, tenant=self.tenant, role=RoleChoices.OPERATOR)
+        UserPropertyPermission.objects.create(
+            user=target,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+            can_schedule=True,
+        )
+
+        self._activate_context()
+        response = self.client.post(
+            reverse("webui-users-permissions"),
+            {
+                "action": "update_property_permissions",
+                "user_id": str(target.id),
+                "first_name": "Target",
+                "last_name": "Properties",
+                "role": "operator",
+                "property_ids": [str(self.property.id), str(self.property_2.id)],
+                "can_access": "on",
+                "can_schedule": "on",
+                "can_export_buk": "on",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            set(UserPropertyPermission.objects.filter(user=target, tenant=self.tenant).values_list("property_id", flat=True)),
+            {self.property.id, self.property_2.id},
+        )
+        role = UserTenantRole.objects.get(user=target, tenant=self.tenant)
+        self.assertFalse(role.all_properties_access)
+        response = self.client.get(reverse("webui-users-permissions"))
+        self.assertContains(response, "Pariwana Cusco")
+        self.assertContains(response, "Pariwana Lima")
+        self.assertContains(response, "Horarios")
+        self.assertContains(response, "BUK")
+
+    def test_update_user_sets_all_properties_access(self):
+        target = User.objects.create_user(email="target-all-properties@pariwana.test", password="StrongPass123")
+        UserTenantRole.objects.create(user=target, tenant=self.tenant, role=RoleChoices.ADMIN)
+        UserPropertyPermission.objects.create(
+            user=target,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+            can_manage_users=True,
+        )
+
+        self._activate_context()
+        response = self.client.post(
+            reverse("webui-users-permissions"),
+            {
+                "action": "update_property_permissions",
+                "user_id": str(target.id),
+                "first_name": "Target",
+                "last_name": "All",
+                "role": "admin",
+                "all_properties_access": "on",
+                "property_ids": [str(self.property.id), str(self.property_2.id)],
+                "can_access": "on",
+                "can_manage_users": "on",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        role = UserTenantRole.objects.get(user=target, tenant=self.tenant)
+        self.assertTrue(role.all_properties_access)
+        self.assertTrue(role.property_permissions_template["can_manage_users"])
+        response = self.client.get(reverse("webui-users-permissions"))
+        self.assertContains(response, "Todas las sedes")
+
     def test_deactivate_user(self):
         target = User.objects.create_user(email="deactivate-ui@pariwana.test", password="StrongPass123")
         UserTenantRole.objects.create(user=target, tenant=self.tenant, role=RoleChoices.OPERATOR)
@@ -5777,6 +5879,47 @@ class WebUiUsersPermissionsTests(TestCase):
         self.assertEqual(response.status_code, 302)
         target.refresh_from_db()
         self.assertFalse(target.is_active)
+
+    def test_reactivate_user(self):
+        target = User.objects.create_user(email="reactivate-ui@pariwana.test", password="StrongPass123", is_active=False)
+        UserTenantRole.objects.create(user=target, tenant=self.tenant, role=RoleChoices.OPERATOR)
+        UserPropertyPermission.objects.create(
+            user=target,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+        )
+        self._activate_context()
+        response = self.client.post(
+            reverse("webui-users-permissions"),
+            {
+                "action": "reactivate_user",
+                "user_id": str(target.id),
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        target.refresh_from_db()
+        self.assertTrue(target.is_active)
+
+    def test_delete_inactive_user_permanently(self):
+        target = User.objects.create_user(email="destroy-ui@pariwana.test", password="StrongPass123", is_active=False)
+        UserTenantRole.objects.create(user=target, tenant=self.tenant, role=RoleChoices.OPERATOR)
+        UserPropertyPermission.objects.create(
+            user=target,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+        )
+        self._activate_context()
+        response = self.client.post(
+            reverse("webui-users-permissions"),
+            {
+                "action": "delete_user_permanently",
+                "user_id": str(target.id),
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(User.objects.filter(id=target.id).exists())
 
     def test_reset_user_password_records_audit(self):
         target = User.objects.create_user(email="reset-ui@pariwana.test", password="StrongPass123")

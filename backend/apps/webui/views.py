@@ -387,10 +387,10 @@ def _build_nav_items(user, tenant, property_obj, current_path="/app/"):
             other_items.append(nav_item("Importaciones", "/app/imports/"))
     if _can_nav_module(user, tenant, property_obj, "backup", roles=["admin"]):
         other_items.append(nav_item("Backup JSON", "/app/backup/"))
-    if _can_nav_module(user, tenant, property_obj, "month_closure", roles=["admin"]):
-        items.append(nav_item("Cierre de mes", "/app/month-closure/"))
     if _can_nav_module(user, tenant, property_obj, "control", "can_use_control"):
-        other_items.append(nav_item("Control 15 dias", "/app/control/"))
+        items.append(nav_item("Control 15 dias", "/app/control/"))
+    if _can_nav_module(user, tenant, property_obj, "month_closure", roles=["admin"]):
+        other_items.append(nav_item("Cierre de mes", "/app/month-closure/"))
     if _can_nav_module(user, tenant, property_obj, "audit", roles=["admin"]):
         other_items.append(nav_item("Auditoria", "/app/audit/"))
     if (
@@ -2130,6 +2130,8 @@ def scheduling_team_report_pdf(request):
     for key, state in sorted(state_rows.items(), key=lambda item: item[1].name):
         row_keys.append((key, state.name))
 
+    date_chunks = [date_columns[index : index + 7] for index in range(0, len(date_columns), 7)]
+
     buffer = BytesIO()
     response = HttpResponse(content_type="application/pdf")
     file_name = f"reporte_equipo_{property_obj.slug}_{area.name.lower().replace(' ', '_')}_{date_from}_{date_to}.pdf"
@@ -2153,41 +2155,52 @@ def scheduling_team_report_pdf(request):
         Spacer(1, 8),
     ]
 
-    header = [Paragraph("Turno", small)]
-    for day in date_columns:
-        header.append(Paragraph(f"{day.strftime('%d/%m')}<br/>{WEEKDAY_SHORT_LABELS[day.weekday()]}", small))
-    table_data = [header]
-    if row_keys:
-        for key, label in row_keys:
-            row = [Paragraph(label, small)]
-            for day in date_columns:
-                names = sorted(grid.get((key, day), []))
-                row.append(Paragraph("<br/>".join(names) if names else "-", small))
-            table_data.append(row)
-    else:
-        table_data.append([Paragraph("Sin asignaciones", small)] + [Paragraph("-", small) for _ in date_columns])
-
     first_col_width = 76
-    remaining_width = landscape(A4)[0] - doc.leftMargin - doc.rightMargin - first_col_width
-    date_col_width = max(34, remaining_width / max(1, len(date_columns)))
-    table = Table(table_data, repeatRows=1, colWidths=[first_col_width] + [date_col_width] * len(date_columns))
-    table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e5e7eb")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#111827")),
-                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#cbd5e1")),
-                ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("BACKGROUND", (0, 1), (0, -1), colors.HexColor("#f8fafc")),
-                ("LEFTPADDING", (0, 0), (-1, -1), 3),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 3),
-                ("TOPPADDING", (0, 0), (-1, -1), 3),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-            ]
+    usable_width = landscape(A4)[0] - doc.leftMargin - doc.rightMargin
+    remaining_width = usable_width - first_col_width
+    for chunk_index, chunk_dates in enumerate(date_chunks):
+        if chunk_index:
+            story.append(Spacer(1, 10))
+        story.append(
+            Paragraph(
+                f"Bloque {chunk_index + 1}: {chunk_dates[0].strftime('%d-%m-%Y')} a {chunk_dates[-1].strftime('%d-%m-%Y')}",
+                styles["BodyText"],
+            )
         )
-    )
-    story.append(table)
+        story.append(Spacer(1, 4))
+        header = [Paragraph("Turno", small)]
+        for day in chunk_dates:
+            header.append(Paragraph(f"{day.strftime('%d/%m')}<br/>{WEEKDAY_SHORT_LABELS[day.weekday()]}", small))
+        table_data = [header]
+        if row_keys:
+            for key, label in row_keys:
+                row = [Paragraph(label, small)]
+                for day in chunk_dates:
+                    names = sorted(grid.get((key, day), []))
+                    row.append(Paragraph("<br/>".join(names) if names else "-", small))
+                table_data.append(row)
+        else:
+            table_data.append([Paragraph("Sin asignaciones", small)] + [Paragraph("-", small) for _ in chunk_dates])
+
+        date_col_width = remaining_width / max(1, len(chunk_dates))
+        table = Table(table_data, repeatRows=1, colWidths=[first_col_width] + [date_col_width] * len(chunk_dates))
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e5e7eb")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#111827")),
+                    ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#cbd5e1")),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("BACKGROUND", (0, 1), (0, -1), colors.HexColor("#f8fafc")),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 3),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+                    ("TOPPADDING", (0, 0), (-1, -1), 3),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+                ]
+            )
+        )
+        story.append(table)
     doc.build(story)
     response.write(buffer.getvalue())
     return response
@@ -8545,6 +8558,76 @@ def users_permissions_page(request):
             messages.success(request, "Usuario desactivado.")
             return redirect("webui-users-permissions")
 
+        if action == "reactivate_user":
+            user_id = str(request.POST.get("user_id", "")).strip()
+            if not user_id.isdigit():
+                messages.error(request, "Usuario invalido.")
+                return redirect("webui-users-permissions")
+            target_user = User.objects.filter(id=int(user_id)).first()
+            if target_user is None:
+                messages.error(request, "Usuario no encontrado.")
+                return redirect("webui-users-permissions")
+            if target_user.is_super_admin:
+                messages.error(request, "No se puede reactivar un Super Administrador desde esta pantalla.")
+                return redirect("webui-users-permissions")
+            if target_user.is_active:
+                messages.info(request, "La cuenta ya se encontraba activa.")
+                return redirect("webui-users-permissions")
+            before = _audit_snapshot(target_user, ["email", "is_active", "is_super_admin"])
+            target_user.is_active = True
+            target_user.save(update_fields=["is_active", "updated_at"])
+            AuditService.log(
+                tenant=tenant,
+                property_obj=property_obj,
+                user=request.user,
+                action="reactivate",
+                entity_type="User",
+                entity_id=target_user.id,
+                before=before,
+                after=_audit_snapshot(target_user, ["email", "is_active", "is_super_admin"]),
+            )
+            messages.success(request, "Usuario reactivado.")
+            return redirect("webui-users-permissions")
+
+        if action == "delete_user_permanently":
+            user_id = str(request.POST.get("user_id", "")).strip()
+            if not user_id.isdigit():
+                messages.error(request, "Usuario invalido.")
+                return redirect("webui-users-permissions")
+            target_user = User.objects.filter(id=int(user_id)).first()
+            if target_user is None:
+                messages.error(request, "Usuario no encontrado.")
+                return redirect("webui-users-permissions")
+            if target_user.id == request.user.id:
+                messages.error(request, "No puedes borrar definitivamente tu propio usuario desde esta pantalla.")
+                return redirect("webui-users-permissions")
+            if target_user.is_super_admin:
+                messages.error(request, "No se puede borrar un Super Administrador desde esta pantalla.")
+                return redirect("webui-users-permissions")
+            if target_user.is_active:
+                messages.error(request, "Primero desactiva el usuario antes de borrarlo definitivamente.")
+                return redirect("webui-users-permissions")
+            before = _audit_snapshot(target_user, ["email", "is_active", "is_super_admin"])
+            target_id = target_user.id
+            target_email = target_user.email
+            try:
+                target_user.delete()
+            except ProtectedError:
+                messages.error(request, "No se pudo borrar el usuario porque tiene registros protegidos asociados.")
+                return redirect("webui-users-permissions")
+            AuditService.log(
+                tenant=tenant,
+                property_obj=property_obj,
+                user=request.user,
+                action="delete_permanent",
+                entity_type="User",
+                entity_id=target_id,
+                before=before,
+                after={"email": target_email, "deleted": True},
+            )
+            messages.success(request, "Usuario borrado definitivamente.")
+            return redirect("webui-users-permissions")
+
     tenant_properties = list(Property.objects.filter(tenant=tenant).order_by("name"))
     areas = list(Area.objects.filter(tenant=tenant, property=property_obj, active=True).order_by("name"))
     role_map = {
@@ -8554,7 +8637,7 @@ def users_permissions_page(request):
     tenant_prop_perms = list(
         UserPropertyPermission.objects.filter(tenant=tenant).select_related("user", "property")
     )
-    prop_perms = [item for item in tenant_prop_perms if item.property_id == property_obj.id]
+    perm_by_user_property = {(item.user_id, item.property_id): item for item in tenant_prop_perms}
     property_ids_map = {}
     for item in tenant_prop_perms:
         property_ids_map.setdefault(item.user_id, set()).add(item.property_id)
@@ -8565,40 +8648,26 @@ def users_permissions_page(request):
     for item in area_perms:
         area_map.setdefault(item.user_id, set()).add(item.area_id)
 
+    property_names_by_id = {item.id: item.name for item in tenant_properties}
     rows = []
-    included_user_ids = set()
-    for perm in prop_perms:
-        tenant_role = role_map.get(perm.user_id)
-        role_profile_name = tenant_role.role_profile.name if tenant_role and tenant_role.role_profile_id else ""
-        role_label = dict(RoleChoices.choices).get(tenant_role.role, tenant_role.role) if tenant_role else ""
-        selected_property_ids = (
-            {item.id for item in tenant_properties}
-            if tenant_role and tenant_role.all_properties_access
-            else property_ids_map.get(perm.user_id, set())
-        )
-        rows.append(
-            {
-                "user": perm.user,
-                "role": tenant_role.role if tenant_role else "",
-                "role_label": role_label,
-                "role_profile_name": role_profile_name,
-                "role_profile_id": tenant_role.role_profile_id if tenant_role else None,
-                "all_properties_access": tenant_role.all_properties_access if tenant_role else False,
-                "selected_property_ids": selected_property_ids,
-                "permission": perm,
-                "selected_area_ids": area_map.get(perm.user_id, set()),
-            }
-        )
-        included_user_ids.add(perm.user_id)
     for tenant_role in role_map.values():
-        if (
-            tenant_role.user_id in included_user_ids
-            or not tenant_role.all_properties_access
-            or tenant_role.role not in {RoleChoices.ADMIN, RoleChoices.OPERATOR}
-        ):
-            continue
         role_profile_name = tenant_role.role_profile.name if tenant_role.role_profile_id else ""
         role_label = dict(RoleChoices.choices).get(tenant_role.role, tenant_role.role)
+        selected_property_ids = (
+            {item.id for item in tenant_properties}
+            if tenant_role.all_properties_access
+            else property_ids_map.get(tenant_role.user_id, set())
+        )
+        selected_property_names = [
+            property_names_by_id[property_id]
+            for property_id in sorted(selected_property_ids, key=lambda item: property_names_by_id.get(item, ""))
+            if property_id in property_names_by_id
+        ]
+        current_permission = perm_by_user_property.get((tenant_role.user_id, property_obj.id))
+        if current_permission is None and tenant_role.all_properties_access:
+            current_permission = _property_permission_object_from_payload(tenant_role.property_permissions_template)
+        elif current_permission is None:
+            current_permission = _property_permission_object_from_payload({})
         rows.append(
             {
                 "user": tenant_role.user,
@@ -8606,9 +8675,10 @@ def users_permissions_page(request):
                 "role_label": role_label,
                 "role_profile_name": role_profile_name,
                 "role_profile_id": tenant_role.role_profile_id,
-                "all_properties_access": True,
-                "selected_property_ids": {item.id for item in tenant_properties},
-                "permission": _property_permission_object_from_payload(tenant_role.property_permissions_template),
+                "all_properties_access": tenant_role.all_properties_access,
+                "selected_property_ids": selected_property_ids,
+                "selected_property_names": selected_property_names,
+                "permission": current_permission,
                 "selected_area_ids": area_map.get(tenant_role.user_id, set()),
             }
         )

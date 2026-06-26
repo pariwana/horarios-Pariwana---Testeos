@@ -56,6 +56,10 @@
               </td>
               <td>
                 <div class="mobile-card-meta">
+                  {% if row.all_properties_access %}<span class="badge">Todas las sedes</span>{% endif %}
+                  {% if not row.all_properties_access %}
+                    {% for property_name in row.selected_property_names %}<span class="badge">{{ property_name }}</span>{% endfor %}
+                  {% endif %}
                   {% if row.permission.can_schedule %}<span class="badge">Horarios</span>{% endif %}
                   {% if row.permission.can_export_buk %}<span class="badge">BUK</span>{% endif %}
                   {% if row.permission.can_manage_workers %}<span class="badge">Trabajadores</span>{% endif %}
@@ -79,6 +83,9 @@
                   {% if row.user.is_active %}
                     <button class="icon-button" type="button" data-open-modal="user-password-modal-{{ row.user.id }}" title="Restablecer contrasena">&#8635;</button>
                     <button class="icon-button danger" type="button" data-open-modal="user-delete-modal-{{ row.user.id }}" title="Desactivar usuario">&#10005;</button>
+                  {% else %}
+                    <button class="icon-button" type="button" data-open-modal="user-reactivate-modal-{{ row.user.id }}" title="Reactivar usuario">&#8634;</button>
+                    <button class="icon-button danger" type="button" data-open-modal="user-destroy-modal-{{ row.user.id }}" title="Borrar definitivamente">&#128465;</button>
                   {% endif %}
                 </span>
               </td>
@@ -99,6 +106,10 @@
               {% if row.user.is_active %}<span class="badge badge-ok">Activo</span>{% else %}<span class="badge badge-muted">Inactivo</span>{% endif %}
             </div>
             <div class="mobile-card-meta">
+              {% if row.all_properties_access %}<span class="badge">Todas las sedes</span>{% endif %}
+              {% if not row.all_properties_access %}
+                {% for property_name in row.selected_property_names %}<span class="badge">{{ property_name }}</span>{% endfor %}
+              {% endif %}
               {% if row.permission.can_schedule %}<span class="badge">Horarios</span>{% endif %}
               {% if row.permission.can_export_buk %}<span class="badge">BUK</span>{% endif %}
               {% if row.permission.can_manage_workers %}<span class="badge">Trabajadores</span>{% endif %}
@@ -109,6 +120,9 @@
               {% if row.user.is_active %}
                 <button class="icon-button" type="button" data-open-modal="user-password-modal-{{ row.user.id }}" title="Restablecer contrasena">&#8635;</button>
                 <button class="icon-button danger" type="button" data-open-modal="user-delete-modal-{{ row.user.id }}" title="Desactivar usuario">&#10005;</button>
+              {% else %}
+                <button class="icon-button" type="button" data-open-modal="user-reactivate-modal-{{ row.user.id }}" title="Reactivar usuario">&#8634;</button>
+                <button class="icon-button danger" type="button" data-open-modal="user-destroy-modal-{{ row.user.id }}" title="Borrar definitivamente">&#128465;</button>
               {% endif %}
             </div>
           </article>
@@ -389,6 +403,44 @@
           <div class="modal-actions">
             <button type="button" data-close-modal>Cancelar</button>
             <button class="icon-button danger" style="width:auto; padding:8px 12px;" type="submit">Desactivar</button>
+          </div>
+        </form>
+      </div>
+    </dialog>
+
+    <dialog class="modal-dialog" id="user-reactivate-modal-{{ row.user.id }}">
+      <div class="modal-header">
+        <h3>Reactivar usuario</h3>
+        <button class="modal-close" type="button" data-close-modal>&times;</button>
+      </div>
+      <div class="modal-body">
+        <p>La cuenta <strong>{{ row.user.email }}</strong> volvera a poder iniciar sesion.</p>
+        <form method="post">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="reactivate_user">
+          <input type="hidden" name="user_id" value="{{ row.user.id }}">
+          <div class="modal-actions">
+            <button type="button" data-close-modal>Cancelar</button>
+            <button class="primary" type="submit">Reactivar</button>
+          </div>
+        </form>
+      </div>
+    </dialog>
+
+    <dialog class="modal-dialog modal-danger" id="user-destroy-modal-{{ row.user.id }}">
+      <div class="modal-header">
+        <h3>Borrar usuario</h3>
+        <button class="modal-close" type="button" data-close-modal>&times;</button>
+      </div>
+      <div class="modal-body">
+        <p>La cuenta <strong>{{ row.user.email }}</strong> se borrara definitivamente. Esta accion no se puede deshacer.</p>
+        <form method="post">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="delete_user_permanently">
+          <input type="hidden" name="user_id" value="{{ row.user.id }}">
+          <div class="modal-actions">
+            <button type="button" data-close-modal>Cancelar</button>
+            <button class="icon-button danger" style="width:auto; padding:8px 12px;" type="submit">Borrar definitivamente</button>
           </div>
         </form>
       </div>
