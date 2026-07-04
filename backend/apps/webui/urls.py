@@ -7,7 +7,7 @@ urlpatterns = [
     path("", views.root_redirect, name="webui-root"),
     path(
         "favicon.ico",
-        RedirectView.as_view(url="/static/webui/icons/favicon.ico", permanent=True),
+        RedirectView.as_view(url="/static/webui/icons/favicon.ico?v=20260704", permanent=False),
         name="webui-favicon",
     ),
     path("app/login/", views.login_page, name="webui-login"),
