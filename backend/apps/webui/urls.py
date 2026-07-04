@@ -1,9 +1,15 @@
 from django.urls import path
+from django.views.generic import RedirectView
 
 from apps.webui import views
 
 urlpatterns = [
     path("", views.root_redirect, name="webui-root"),
+    path(
+        "favicon.ico",
+        RedirectView.as_view(url="/static/webui/icons/favicon.ico", permanent=True),
+        name="webui-favicon",
+    ),
     path("app/login/", views.login_page, name="webui-login"),
     path("app/logout/", views.logout_page, name="webui-logout"),
     path("app/context/", views.switch_context, name="webui-context"),
