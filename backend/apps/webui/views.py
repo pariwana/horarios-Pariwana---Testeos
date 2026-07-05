@@ -5,11 +5,13 @@ import re
 from collections import defaultdict
 from datetime import date, timedelta, datetime, time
 from io import BytesIO, StringIO
+from pathlib import Path
 import csv
 from types import SimpleNamespace
 from uuid import uuid4
 from urllib.parse import urlencode
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
@@ -20,7 +22,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import Count, Max, Min, Q
 from django.db.models.deletion import ProtectedError
 from django.db.utils import OperationalError, ProgrammingError
-from django.http import HttpResponse, HttpResponseForbidden, JsonResponse
+from django.http import FileResponse, Http404, HttpResponse, HttpResponseForbidden, JsonResponse
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils.text import slugify
@@ -498,6 +500,22 @@ def _build_context(request, require_property=False):
         "context_error": "",
         "nav_items": _build_nav_items(request.user, selected_tenant, selected_property, request.path),
     }
+
+
+def favicon_file(request, file_name="favicon.ico"):
+    allowed_files = {
+        "favicon.ico": "image/vnd.microsoft.icon",
+        "favicon-32x32.png": "image/png",
+        "apple-touch-icon.png": "image/png",
+    }
+    if file_name not in allowed_files:
+        raise Http404("Icono no encontrado.")
+    icon_path = Path(settings.BASE_DIR) / "apps" / "webui" / "static" / "webui" / "icons" / file_name
+    if not icon_path.exists():
+        raise Http404("Icono no encontrado.")
+    response = FileResponse(icon_path.open("rb"), content_type=allowed_files[file_name])
+    response["Cache-Control"] = "public, max-age=3600"
+    return response
 
 
 def login_page(request):

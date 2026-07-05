@@ -1,15 +1,12 @@
 from django.urls import path
-from django.views.generic import RedirectView
 
 from apps.webui import views
 
 urlpatterns = [
     path("", views.root_redirect, name="webui-root"),
-    path(
-        "favicon.ico",
-        RedirectView.as_view(url="/static/webui/icons/favicon.ico?v=20260704", permanent=False),
-        name="webui-favicon",
-    ),
+    path("favicon.ico", views.favicon_file, name="webui-favicon"),
+    path("favicon-32x32.png", views.favicon_file, {"file_name": "favicon-32x32.png"}, name="webui-favicon-png"),
+    path("apple-touch-icon.png", views.favicon_file, {"file_name": "apple-touch-icon.png"}, name="webui-apple-touch-icon"),
     path("app/login/", views.login_page, name="webui-login"),
     path("app/logout/", views.logout_page, name="webui-logout"),
     path("app/context/", views.switch_context, name="webui-context"),
