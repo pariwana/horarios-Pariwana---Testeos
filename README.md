@@ -57,7 +57,7 @@ Usuario → Nginx Proxy Manager (npm_network) → Django (Gunicorn) → PostgreS
 ├── .env.example               # Template de variables de entorno
 ├── docker-compose.yml         # Docker Compose para desarrollo
 ├── docker-compose.prod.yml    # Docker Compose para producción
-├── requirements.txt           # Dependencias Python
+├── backend/requirements.txt   # Dependencias Python (único source de verdad)
 └── netlify.toml               # Configuración Netlify (frontend alternativo)
 ```
 
