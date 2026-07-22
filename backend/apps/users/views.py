@@ -186,6 +186,15 @@ class UserTenantRoleViewSet(TenantAdminScopedViewSet):
 
     def perform_update(self, serializer):
         self._ensure_manage(serializer.instance.tenant)
+        target_tenant = serializer.validated_data.get("tenant", serializer.instance.tenant)
+        target_user = serializer.validated_data.get("user", serializer.instance.user)
+        self._ensure_manage(target_tenant)
+        if (
+            target_user != serializer.instance.user
+            and not PermissionService.is_super_admin(self.request.user)
+            and not UserTenantRole.objects.filter(user=target_user, tenant=target_tenant).exists()
+        ):
+            raise PermissionDenied("El usuario no pertenece al tenant.")
         serializer.save()
 
     def perform_destroy(self, instance):
@@ -244,6 +253,17 @@ class UserAreaPermissionViewSet(TenantAdminScopedViewSet):
 
     def perform_update(self, serializer):
         self._ensure_manage(serializer.instance.tenant)
+        target_tenant = serializer.validated_data.get("tenant", serializer.instance.tenant)
+        target_property = serializer.validated_data.get("property", serializer.instance.property)
+        target_area = serializer.validated_data.get("area", serializer.instance.area)
+        target_user = serializer.validated_data.get("user", serializer.instance.user)
+        self._ensure_manage(target_tenant)
+        if not UserTenantRole.objects.filter(user=target_user, tenant=target_tenant).exists():
+            raise ValidationError("El usuario no pertenece al tenant.")
+        if target_property.tenant_id != target_tenant.id:
+            raise ValidationError("La sede no pertenece al tenant.")
+        if target_area.tenant_id != target_tenant.id or target_area.property_id != target_property.id:
+            raise ValidationError("El area no pertenece al tenant/sede indicada.")
         serializer.save()
 
     def perform_destroy(self, instance):

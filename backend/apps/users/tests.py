@@ -307,6 +307,231 @@ class UserManagementApiTests(TestCase):
         )
 
 
+class ResultingAuthorizationUpdateTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.tenant = Tenant.objects.create(name="Tenant autorizado", slug="tenant-autorizado")
+        self.property = Property.objects.create(tenant=self.tenant, name="Sede autorizada", slug="sede-autorizada")
+        self.area = Area.objects.create(tenant=self.tenant, property=self.property, name="Area autorizada")
+        self.admin = User.objects.create_user(email="result-admin@pariwana.test", password="StrongPass123")
+        self.target = User.objects.create_user(email="result-target@pariwana.test", password="StrongPass123")
+        UserTenantRole.objects.create(user=self.admin, tenant=self.tenant, role=RoleChoices.ADMIN)
+        self.target_role = UserTenantRole.objects.create(
+            user=self.target,
+            tenant=self.tenant,
+            role=RoleChoices.OPERATOR,
+        )
+        self.area_permission = UserAreaPermission.objects.create(
+            user=self.target,
+            tenant=self.tenant,
+            property=self.property,
+            area=self.area,
+            can_view=True,
+            can_schedule=False,
+        )
+        ModuleActivation.objects.create(tenant=self.tenant, module_key="users_permissions", is_enabled=True)
+
+        self.foreign_tenant = Tenant.objects.create(name="Tenant externo", slug="tenant-externo-result")
+        self.foreign_property = Property.objects.create(
+            tenant=self.foreign_tenant,
+            name="Sede externa",
+            slug="sede-externa-result",
+        )
+        self.foreign_area = Area.objects.create(
+            tenant=self.foreign_tenant,
+            property=self.foreign_property,
+            name="Area externa",
+        )
+        self.foreign_user = User.objects.create_user(email="result-foreign@pariwana.test", password="StrongPass123")
+        UserTenantRole.objects.create(
+            user=self.foreign_user,
+            tenant=self.foreign_tenant,
+            role=RoleChoices.OPERATOR,
+        )
+        self.client.force_authenticate(user=self.admin)
+
+    def _assert_role_unchanged(self):
+        self.target_role.refresh_from_db()
+        self.assertEqual(self.target_role.user_id, self.target.id)
+        self.assertEqual(self.target_role.tenant_id, self.tenant.id)
+        self.assertEqual(self.target_role.role, RoleChoices.OPERATOR)
+
+    def _assert_area_permission_unchanged(self):
+        self.area_permission.refresh_from_db()
+        self.assertEqual(self.area_permission.user_id, self.target.id)
+        self.assertEqual(self.area_permission.tenant_id, self.tenant.id)
+        self.assertEqual(self.area_permission.property_id, self.property.id)
+        self.assertEqual(self.area_permission.area_id, self.area.id)
+        self.assertFalse(self.area_permission.can_schedule)
+
+    def test_user_tenant_role_patch_rejects_unauthorized_resulting_tenant(self):
+        response = self.client.patch(
+            f"/api/user-tenant-roles/{self.target_role.id}/?tenant_id={self.tenant.id}",
+            {"tenant": self.foreign_tenant.id, "role": RoleChoices.ADMIN},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+        self._assert_role_unchanged()
+
+    def test_user_tenant_role_put_rejects_unauthorized_resulting_tenant(self):
+        response = self.client.put(
+            f"/api/user-tenant-roles/{self.target_role.id}/?tenant_id={self.tenant.id}",
+            {"user": self.target.id, "tenant": self.foreign_tenant.id, "role": RoleChoices.ADMIN},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+        self._assert_role_unchanged()
+
+    def test_user_tenant_role_patch_rejects_external_resulting_user(self):
+        response = self.client.patch(
+            f"/api/user-tenant-roles/{self.target_role.id}/?tenant_id={self.tenant.id}",
+            {"user": self.foreign_user.id, "role": RoleChoices.ADMIN},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+        self._assert_role_unchanged()
+
+    def test_user_tenant_role_put_rejects_external_resulting_user(self):
+        response = self.client.put(
+            f"/api/user-tenant-roles/{self.target_role.id}/?tenant_id={self.tenant.id}",
+            {"user": self.foreign_user.id, "tenant": self.tenant.id, "role": RoleChoices.ADMIN},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+        self._assert_role_unchanged()
+
+    def test_user_tenant_role_admin_can_patch_within_authorized_tenant(self):
+        response = self.client.patch(
+            f"/api/user-tenant-roles/{self.target_role.id}/?tenant_id={self.tenant.id}",
+            {"role": RoleChoices.SUPERVISOR},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.target_role.refresh_from_db()
+        self.assertEqual(self.target_role.role, RoleChoices.SUPERVISOR)
+
+    def test_user_tenant_role_super_admin_can_put_across_tenants(self):
+        super_admin = User.objects.create_user(
+            email="result-super@pariwana.test",
+            password="StrongPass123",
+            is_super_admin=True,
+            is_staff=True,
+        )
+        self.client.force_authenticate(user=super_admin)
+        response = self.client.put(
+            f"/api/user-tenant-roles/{self.target_role.id}/?tenant_id={self.tenant.id}",
+            {"user": self.target.id, "tenant": self.foreign_tenant.id, "role": RoleChoices.ADMIN},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.target_role.refresh_from_db()
+        self.assertEqual(self.target_role.tenant_id, self.foreign_tenant.id)
+        self.assertEqual(self.target_role.role, RoleChoices.ADMIN)
+
+    def test_user_area_permission_patch_rejects_unauthorized_resulting_tenant(self):
+        response = self.client.patch(
+            f"/api/user-area-permissions/{self.area_permission.id}/?tenant_id={self.tenant.id}",
+            {
+                "tenant": self.foreign_tenant.id,
+                "property": self.foreign_property.id,
+                "area": self.foreign_area.id,
+                "user": self.foreign_user.id,
+                "can_schedule": True,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+        self._assert_area_permission_unchanged()
+
+    def test_user_area_permission_put_rejects_unauthorized_resulting_tenant(self):
+        response = self.client.put(
+            f"/api/user-area-permissions/{self.area_permission.id}/?tenant_id={self.tenant.id}",
+            {
+                "user": self.foreign_user.id,
+                "tenant": self.foreign_tenant.id,
+                "property": self.foreign_property.id,
+                "area": self.foreign_area.id,
+                "can_view": True,
+                "can_schedule": True,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 403)
+        self._assert_area_permission_unchanged()
+
+    def test_user_area_permission_patch_rejects_external_resulting_user(self):
+        response = self.client.patch(
+            f"/api/user-area-permissions/{self.area_permission.id}/?tenant_id={self.tenant.id}",
+            {"user": self.foreign_user.id, "can_schedule": True},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self._assert_area_permission_unchanged()
+
+    def test_user_area_permission_patch_rejects_incoherent_property_and_area(self):
+        response = self.client.patch(
+            f"/api/user-area-permissions/{self.area_permission.id}/?tenant_id={self.tenant.id}",
+            {"property": self.foreign_property.id, "area": self.foreign_area.id, "can_schedule": True},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self._assert_area_permission_unchanged()
+
+    def test_user_area_permission_put_rejects_external_property_and_area(self):
+        response = self.client.put(
+            f"/api/user-area-permissions/{self.area_permission.id}/?tenant_id={self.tenant.id}",
+            {
+                "user": self.target.id,
+                "tenant": self.tenant.id,
+                "property": self.foreign_property.id,
+                "area": self.foreign_area.id,
+                "can_view": True,
+                "can_schedule": True,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self._assert_area_permission_unchanged()
+
+    def test_user_area_permission_admin_can_patch_within_authorized_tenant(self):
+        response = self.client.patch(
+            f"/api/user-area-permissions/{self.area_permission.id}/?tenant_id={self.tenant.id}",
+            {"can_schedule": True},
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.area_permission.refresh_from_db()
+        self.assertTrue(self.area_permission.can_schedule)
+
+    def test_user_area_permission_super_admin_can_put_across_tenants(self):
+        super_admin = User.objects.create_user(
+            email="area-result-super@pariwana.test",
+            password="StrongPass123",
+            is_super_admin=True,
+            is_staff=True,
+        )
+        self.client.force_authenticate(user=super_admin)
+        response = self.client.put(
+            f"/api/user-area-permissions/{self.area_permission.id}/?tenant_id={self.tenant.id}",
+            {
+                "user": self.foreign_user.id,
+                "tenant": self.foreign_tenant.id,
+                "property": self.foreign_property.id,
+                "area": self.foreign_area.id,
+                "can_view": True,
+                "can_schedule": True,
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.area_permission.refresh_from_db()
+        self.assertEqual(self.area_permission.tenant_id, self.foreign_tenant.id)
+        self.assertEqual(self.area_permission.user_id, self.foreign_user.id)
+        self.assertEqual(self.area_permission.property_id, self.foreign_property.id)
+        self.assertEqual(self.area_permission.area_id, self.foreign_area.id)
+        self.assertTrue(self.area_permission.can_schedule)
+
+
 class CriticalUserPrivilegeEscalationRegressionTests(TestCase):
     def setUp(self):
         self.client = APIClient()

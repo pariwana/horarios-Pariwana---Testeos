@@ -294,7 +294,7 @@ def _sync_user_property_permissions(*, user, tenant, properties, permission_payl
         UserAreaPermission.objects.filter(user=user, tenant=tenant).exclude(property_id__in=selected_ids).delete()
 
 
-def _get_exclusive_tenant_user(*, tenant, user_id):
+def _get_exclusive_tenant_user(*, requester, tenant, user_id):
     tenant_role = (
         UserTenantRole.objects.select_related("user")
         .filter(tenant=tenant, user_id=user_id)
@@ -302,7 +302,10 @@ def _get_exclusive_tenant_user(*, tenant, user_id):
     )
     if tenant_role is None:
         return None, "Usuario no encontrado en este tenant."
-    if UserTenantRole.objects.filter(user=tenant_role.user).exclude(tenant=tenant).exists():
+    if (
+        not PermissionService.is_super_admin(requester)
+        and UserTenantRole.objects.filter(user=tenant_role.user).exclude(tenant=tenant).exists()
+    ):
         return None, "No se puede modificar globalmente una cuenta compartida entre tenants."
     return tenant_role.user, None
 
@@ -8440,7 +8443,11 @@ def users_permissions_page(request):
             if not user_id.isdigit():
                 messages.error(request, "Usuario invalido.")
                 return redirect("webui-users-permissions")
-            target_user, target_error = _get_exclusive_tenant_user(tenant=tenant, user_id=int(user_id))
+            target_user, target_error = _get_exclusive_tenant_user(
+                requester=request.user,
+                tenant=tenant,
+                user_id=int(user_id),
+            )
             if target_user is None:
                 messages.error(request, target_error)
                 return redirect("webui-users-permissions")
@@ -8517,7 +8524,11 @@ def users_permissions_page(request):
             if not user_id.isdigit():
                 messages.error(request, "Usuario invalido.")
                 return redirect("webui-users-permissions")
-            target_user, target_error = _get_exclusive_tenant_user(tenant=tenant, user_id=int(user_id))
+            target_user, target_error = _get_exclusive_tenant_user(
+                requester=request.user,
+                tenant=tenant,
+                user_id=int(user_id),
+            )
             if target_user is None:
                 messages.error(request, target_error)
                 return redirect("webui-users-permissions")
@@ -8560,7 +8571,11 @@ def users_permissions_page(request):
             if not user_id.isdigit():
                 messages.error(request, "Usuario invalido.")
                 return redirect("webui-users-permissions")
-            target_user, target_error = _get_exclusive_tenant_user(tenant=tenant, user_id=int(user_id))
+            target_user, target_error = _get_exclusive_tenant_user(
+                requester=request.user,
+                tenant=tenant,
+                user_id=int(user_id),
+            )
             if target_user is None:
                 messages.error(request, target_error)
                 return redirect("webui-users-permissions")
@@ -8594,7 +8609,11 @@ def users_permissions_page(request):
             if not user_id.isdigit():
                 messages.error(request, "Usuario invalido.")
                 return redirect("webui-users-permissions")
-            target_user, target_error = _get_exclusive_tenant_user(tenant=tenant, user_id=int(user_id))
+            target_user, target_error = _get_exclusive_tenant_user(
+                requester=request.user,
+                tenant=tenant,
+                user_id=int(user_id),
+            )
             if target_user is None:
                 messages.error(request, target_error)
                 return redirect("webui-users-permissions")
@@ -8625,7 +8644,11 @@ def users_permissions_page(request):
             if not user_id.isdigit():
                 messages.error(request, "Usuario invalido.")
                 return redirect("webui-users-permissions")
-            target_user, target_error = _get_exclusive_tenant_user(tenant=tenant, user_id=int(user_id))
+            target_user, target_error = _get_exclusive_tenant_user(
+                requester=request.user,
+                tenant=tenant,
+                user_id=int(user_id),
+            )
             if target_user is None:
                 messages.error(request, target_error)
                 return redirect("webui-users-permissions")

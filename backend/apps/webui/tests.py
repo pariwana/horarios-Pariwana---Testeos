@@ -5813,6 +5813,81 @@ class WebUiUsersPermissionsTests(TestCase):
             ).exists()
         )
 
+    def test_local_admin_cannot_update_shared_account_globally(self):
+        shared_user = User.objects.create_user(
+            email="shared-local-ui@pariwana.test",
+            password="StrongPass123",
+            first_name="Nombre original",
+        )
+        UserTenantRole.objects.create(user=shared_user, tenant=self.tenant, role=RoleChoices.OPERATOR)
+        foreign_tenant = Tenant.objects.create(name="Tenant compartido local", slug="tenant-compartido-local")
+        UserTenantRole.objects.create(user=shared_user, tenant=foreign_tenant, role=RoleChoices.OPERATOR)
+        self._activate_context()
+
+        response = self.client.post(
+            reverse("webui-users-permissions"),
+            {
+                "action": "update_property_permissions",
+                "user_id": str(shared_user.id),
+                "first_name": "Nombre alterado",
+                "last_name": "Sin autorizacion",
+                "role": "admin",
+                "can_access": "on",
+                "can_manage_users": "on",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        shared_user.refresh_from_db()
+        self.assertEqual(shared_user.first_name, "Nombre original")
+        self.assertEqual(
+            UserTenantRole.objects.get(user=shared_user, tenant=self.tenant).role,
+            RoleChoices.OPERATOR,
+        )
+
+    def test_super_admin_can_update_shared_account_globally(self):
+        shared_user = User.objects.create_user(
+            email="shared-super-ui@pariwana.test",
+            password="StrongPass123",
+            first_name="Nombre original",
+        )
+        UserTenantRole.objects.create(user=shared_user, tenant=self.tenant, role=RoleChoices.OPERATOR)
+        foreign_tenant = Tenant.objects.create(name="Tenant compartido super", slug="tenant-compartido-super")
+        UserTenantRole.objects.create(user=shared_user, tenant=foreign_tenant, role=RoleChoices.OPERATOR)
+        super_admin = User.objects.create_user(
+            email="shared-super-admin-ui@pariwana.test",
+            password="StrongPass123",
+            is_super_admin=True,
+            is_staff=True,
+        )
+        self.client.force_login(super_admin)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+
+        response = self.client.post(
+            reverse("webui-users-permissions"),
+            {
+                "action": "update_property_permissions",
+                "user_id": str(shared_user.id),
+                "first_name": "Actualizado por superadmin",
+                "last_name": "Cuenta compartida",
+                "role": "supervisor",
+                "can_access": "on",
+                "area_ids": [str(self.area_1.id)],
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        shared_user.refresh_from_db()
+        self.assertEqual(shared_user.first_name, "Actualizado por superadmin")
+        self.assertEqual(
+            UserTenantRole.objects.get(user=shared_user, tenant=self.tenant).role,
+            RoleChoices.SUPERVISOR,
+        )
+        self.assertTrue(UserTenantRole.objects.filter(user=shared_user, tenant=foreign_tenant).exists())
+
     def test_update_user_adds_multiple_properties_and_renders_permissions(self):
         target = User.objects.create_user(email="target-properties@pariwana.test", password="StrongPass123")
         UserTenantRole.objects.create(user=target, tenant=self.tenant, role=RoleChoices.OPERATOR)
