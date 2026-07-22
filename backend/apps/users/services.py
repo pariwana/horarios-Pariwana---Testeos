@@ -187,6 +187,40 @@ class PermissionService:
         return list(perms.values_list("property_id", flat=True))
 
     @staticmethod
+    def get_accessible_area_ids(user, tenant, property_obj=None, action="can_view"):
+        from apps.workers.models import Area
+
+        role = PermissionService.get_user_role(user, tenant)
+        areas = Area.objects.filter(tenant=tenant)
+        if property_obj is not None:
+            areas = areas.filter(property=property_obj)
+        if role in {RoleChoices.SUPER_ADMIN, RoleChoices.ADMIN}:
+            return list(areas.values_list("id", flat=True))
+
+        property_ids = (
+            [property_obj.id]
+            if property_obj is not None
+            else PermissionService.get_accessible_property_ids(user, tenant, action="can_access")
+        )
+        allowed_area_ids = []
+        for property_id in property_ids:
+            perms = UserAreaPermission.objects.filter(
+                user=user,
+                tenant=tenant,
+                property_id=property_id,
+            )
+            if role == RoleChoices.OPERATOR and not perms.exists():
+                allowed_area_ids.extend(
+                    areas.filter(property_id=property_id).values_list("id", flat=True)
+                )
+                continue
+            perms = perms.filter(can_view=True)
+            if action == "can_schedule":
+                perms = perms.filter(can_schedule=True)
+            allowed_area_ids.extend(perms.values_list("area_id", flat=True))
+        return allowed_area_ids
+
+    @staticmethod
     def user_can_area_schedule(user, tenant, property_obj, area):
         role = PermissionService.get_user_role(user, tenant)
         if role in {RoleChoices.SUPER_ADMIN, RoleChoices.ADMIN}:

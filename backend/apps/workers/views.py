@@ -1,4 +1,5 @@
 from rest_framework import viewsets
+from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from apps.common.access import (
     ensure_module_enabled,
@@ -84,6 +85,48 @@ class WorkerViewSet(TenantPropertyFilteredViewSet):
     serializer_class = WorkerSerializer
     module_key = "workers"
     write_action = "can_manage_workers"
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        area_ids = PermissionService.get_accessible_area_ids(
+            self.request.user,
+            self.request.tenant,
+            self.request.property,
+            action="can_view",
+        )
+        return queryset.filter(area_id__in=area_ids)
+
+    def _validate_target_scope(self, serializer):
+        tenant = serializer.validated_data.get("tenant", serializer.instance.tenant if serializer.instance else None)
+        property_obj = serializer.validated_data.get(
+            "property", serializer.instance.property if serializer.instance else None
+        )
+        area = serializer.validated_data.get("area", serializer.instance.area if serializer.instance else None)
+        if tenant is None or property_obj is None or area is None:
+            raise ValidationError("Tenant, sede y area son requeridos.")
+        if property_obj.tenant_id != tenant.id or area.tenant_id != tenant.id or area.property_id != property_obj.id:
+            raise ValidationError("El tenant, la sede y el area del trabajador no son coherentes.")
+        ensure_tenant_roles(self.request, tenant, self.allow_roles)
+        ensure_module_enabled(self.request, tenant, self.module_key)
+        ensure_property_action(self.request, tenant, property_obj, self.write_action)
+        if not PermissionService.user_can_area_view(self.request.user, tenant, property_obj, area):
+            raise PermissionDenied("No tienes permisos para gestionar trabajadores en esta area.")
+
+    def perform_create(self, serializer):
+        self._validate_target_scope(serializer)
+        serializer.save()
+
+    def perform_update(self, serializer):
+        instance = serializer.instance
+        ensure_tenant_roles(self.request, instance.tenant, self.allow_roles)
+        ensure_module_enabled(self.request, instance.tenant, self.module_key)
+        ensure_property_action(self.request, instance.tenant, instance.property, self.write_action)
+        if not PermissionService.user_can_area_view(
+            self.request.user, instance.tenant, instance.property, instance.area
+        ):
+            raise PermissionDenied("No tienes permisos para gestionar trabajadores en esta area.")
+        self._validate_target_scope(serializer)
+        serializer.save()
 
 
 class ShiftViewSet(TenantPropertyFilteredViewSet):
