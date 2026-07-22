@@ -277,6 +277,81 @@ class UserManagementApiTests(TestCase):
         )
         self.assertEqual(response.status_code, 201)
 
+    def test_admin_cannot_reassign_permission_record_to_user_from_another_tenant_by_id(self):
+        local_permission = UserPropertyPermission.objects.create(
+            user=self.target,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+            can_manage_workers=False,
+        )
+        foreign_tenant = Tenant.objects.create(name="Tenant externo API", slug="tenant-externo-api")
+        foreign_user = User.objects.create_user(email="foreign-api@pariwana.test", password="StrongPass123")
+        UserTenantRole.objects.create(user=foreign_user, tenant=foreign_tenant, role=RoleChoices.OPERATOR)
+        self.client.force_authenticate(user=self.admin)
+
+        response = self.client.patch(
+            f"/api/user-property-permissions/{local_permission.id}/?tenant_id={self.tenant.id}",
+            {"user": foreign_user.id, "can_manage_workers": True},
+            format="json",
+        )
+
+        local_permission.refresh_from_db()
+        self.assertIn(response.status_code, {400, 403, 404})
+        self.assertEqual(local_permission.user_id, self.target.id)
+        self.assertEqual(local_permission.tenant_id, self.tenant.id)
+        self.assertEqual(local_permission.property_id, self.property.id)
+        self.assertFalse(local_permission.can_manage_workers)
+        self.assertFalse(
+            UserPropertyPermission.objects.filter(user=foreign_user, tenant=self.tenant).exists()
+        )
+
+
+class CriticalUserPrivilegeEscalationRegressionTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.tenant = Tenant.objects.create(name="Tenant API", slug="tenant-api")
+        self.property = Property.objects.create(tenant=self.tenant, name="Sede API", slug="sede-api")
+        self.admin = User.objects.create_user(email="tenant-admin@pariwana.test", password="StrongPass123")
+        UserTenantRole.objects.create(user=self.admin, tenant=self.tenant, role=RoleChoices.ADMIN)
+        ModuleActivation.objects.create(tenant=self.tenant, module_key="users_permissions", is_enabled=True)
+        self.client.force_authenticate(user=self.admin)
+
+    def test_tenant_admin_cannot_create_super_admin_or_staff_user_via_api(self):
+        response = self.client.post(
+            f"/api/users/?tenant_id={self.tenant.id}",
+            {
+                "email": "escalated-create@pariwana.test",
+                "password": "StrongPass123",
+                "is_super_admin": True,
+                "is_staff": True,
+            },
+            format="json",
+        )
+
+        created = User.objects.filter(email="escalated-create@pariwana.test").first()
+        if created is None:
+            self.assertIn(response.status_code, {400, 403})
+        else:
+            self.assertFalse(created.is_super_admin)
+            self.assertFalse(created.is_staff)
+
+    def test_tenant_admin_cannot_promote_existing_user_to_super_admin_or_staff_via_api(self):
+        target = User.objects.create_user(email="escalated-update@pariwana.test", password="StrongPass123")
+        UserTenantRole.objects.create(user=target, tenant=self.tenant, role=RoleChoices.OPERATOR)
+
+        response = self.client.patch(
+            f"/api/users/{target.id}/?tenant_id={self.tenant.id}",
+            {"is_super_admin": True, "is_staff": True},
+            format="json",
+        )
+
+        target.refresh_from_db()
+        self.assertIn(response.status_code, {200, 400, 403})
+        self.assertFalse(target.is_super_admin)
+        self.assertFalse(target.is_staff)
+        self.assertTrue(UserTenantRole.objects.filter(user=target, tenant=self.tenant).exists())
+
 
 class SupportContextUserViewsTests(TestCase):
     def setUp(self):
