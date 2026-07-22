@@ -151,6 +151,15 @@ class SupervisorAreaRestrictionTests(TestCase):
         self.property = Property.objects.create(tenant=self.tenant, name="Pariwana Cusco", slug="pariwana-cusco")
         self.area_allowed = Area.objects.create(tenant=self.tenant, property=self.property, name="Recepcion")
         self.area_blocked = Area.objects.create(tenant=self.tenant, property=self.property, name="Bar")
+        self.worker_allowed = Worker.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            document_number="77777777",
+            first_name="Permitido",
+            last_name="Area",
+            area=self.area_allowed,
+            active=True,
+        )
         self.worker_blocked = Worker.objects.create(
             tenant=self.tenant,
             property=self.property,
@@ -169,6 +178,58 @@ class SupervisorAreaRestrictionTests(TestCase):
             start_time=time(8, 0),
             end_time=time(16, 0),
         )
+        self.shift_allowed = Shift.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            area=self.area_allowed,
+            name="Recepcion-M",
+            buk_code="REC-M",
+            start_time=time(8, 0),
+            end_time=time(16, 0),
+        )
+        self.assignment_allowed = ScheduleAssignment.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            worker=self.worker_allowed,
+            date=date(2026, 4, 4),
+            shift=self.shift_allowed,
+        )
+        self.assignment_blocked = ScheduleAssignment.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            worker=self.worker_blocked,
+            date=date(2026, 4, 4),
+            shift=self.shift_blocked,
+        )
+        self.foreign_tenant = Tenant.objects.create(name="Tenant externo", slug="tenant-externo")
+        self.foreign_property = Property.objects.create(
+            tenant=self.foreign_tenant,
+            name="Sede externa",
+            slug="sede-externa",
+        )
+        self.foreign_area = Area.objects.create(
+            tenant=self.foreign_tenant,
+            property=self.foreign_property,
+            name="Area externa",
+        )
+        self.foreign_worker = Worker.objects.create(
+            tenant=self.foreign_tenant,
+            property=self.foreign_property,
+            document_number="99999999",
+            first_name="Trabajador",
+            last_name="Externo",
+            area=self.foreign_area,
+            active=True,
+        )
+        self.foreign_shift = Shift.objects.create(
+            tenant=self.foreign_tenant,
+            property=self.foreign_property,
+            area=self.foreign_area,
+            name="Externo-M",
+            buk_code="EXT-M",
+            start_time=time(8, 0),
+            end_time=time(16, 0),
+        )
         self.supervisor = User.objects.create_user(email="sup@pariwana.test", password="StrongPass123")
         UserTenantRole.objects.create(user=self.supervisor, tenant=self.tenant, role=RoleChoices.SUPERVISOR)
         UserPropertyPermission.objects.create(
@@ -177,6 +238,7 @@ class SupervisorAreaRestrictionTests(TestCase):
             property=self.property,
             can_access=True,
             can_schedule=True,
+            can_manage_workers=True,
         )
         UserAreaPermission.objects.create(
             user=self.supervisor,
@@ -187,7 +249,128 @@ class SupervisorAreaRestrictionTests(TestCase):
             can_schedule=True,
         )
         ModuleActivation.objects.create(tenant=self.tenant, module_key="scheduling", is_enabled=True)
+        ModuleActivation.objects.create(tenant=self.tenant, module_key="workers", is_enabled=True)
         self.client.force_authenticate(user=self.supervisor)
+
+    def test_supervisor_worker_list_only_contains_permitted_area(self):
+        response = self.client.get(
+            f"/api/workers/?tenant_id={self.tenant.id}&property_id={self.property.id}"
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.content)
+        rows = response.json()
+        self.assertEqual({row["id"] for row in rows}, {self.worker_allowed.id})
+        self.assertTrue(all(row["tenant"] == self.tenant.id for row in rows))
+        self.assertTrue(all(row["property"] == self.property.id for row in rows))
+        self.assertTrue(all(row["area"] == self.area_allowed.id for row in rows))
+
+    def test_supervisor_assignment_list_only_contains_permitted_area(self):
+        response = self.client.get(
+            f"/api/assignments/?tenant_id={self.tenant.id}&property_id={self.property.id}"
+        )
+
+        self.assertEqual(response.status_code, 200, msg=response.content)
+        rows = response.json()
+        self.assertEqual({row["id"] for row in rows}, {self.assignment_allowed.id})
+        self.assertTrue(all(row["tenant"] == self.tenant.id for row in rows))
+        self.assertTrue(all(row["property"] == self.property.id for row in rows))
+        self.assertTrue(all(row["worker"] == self.worker_allowed.id for row in rows))
+
+    def test_supervisor_cannot_modify_worker_in_unpermitted_area_by_direct_endpoint(self):
+        response = self.client.patch(
+            f"/api/workers/{self.worker_blocked.id}/?tenant_id={self.tenant.id}&property_id={self.property.id}",
+            {"first_name": "Alterado"},
+            format="json",
+        )
+
+        self.worker_blocked.refresh_from_db()
+        self.assertIn(response.status_code, {403, 404})
+        self.assertEqual(self.worker_blocked.first_name, "Bloq")
+        self.assertEqual(self.worker_blocked.area_id, self.area_blocked.id)
+        self.assertEqual(self.worker_blocked.tenant_id, self.tenant.id)
+        self.assertEqual(self.worker_blocked.property_id, self.property.id)
+
+    def test_supervisor_cannot_modify_assignment_in_unpermitted_area_by_direct_endpoint(self):
+        response = self.client.patch(
+            f"/api/assignments/{self.assignment_blocked.id}/?tenant_id={self.tenant.id}&property_id={self.property.id}",
+            {"date": "2026-04-05"},
+            format="json",
+        )
+
+        self.assignment_blocked.refresh_from_db()
+        self.assertIn(response.status_code, {403, 404})
+        self.assertEqual(self.assignment_blocked.date, date(2026, 4, 4))
+        self.assertEqual(self.assignment_blocked.worker_id, self.worker_blocked.id)
+        self.assertEqual(self.assignment_blocked.tenant_id, self.tenant.id)
+        self.assertEqual(self.assignment_blocked.property_id, self.property.id)
+
+    def test_worker_update_cannot_move_record_to_unauthorized_tenant_property_and_area(self):
+        response = self.client.patch(
+            f"/api/workers/{self.worker_allowed.id}/?tenant_id={self.tenant.id}&property_id={self.property.id}",
+            {
+                "tenant": self.foreign_tenant.id,
+                "property": self.foreign_property.id,
+                "area": self.foreign_area.id,
+            },
+            format="json",
+        )
+
+        self.worker_allowed.refresh_from_db()
+        self.assertIn(response.status_code, {400, 403, 404})
+        self.assertEqual(self.worker_allowed.tenant_id, self.tenant.id)
+        self.assertEqual(self.worker_allowed.property_id, self.property.id)
+        self.assertEqual(self.worker_allowed.area_id, self.area_allowed.id)
+
+    def test_worker_update_cannot_move_record_to_unpermitted_area(self):
+        response = self.client.patch(
+            f"/api/workers/{self.worker_allowed.id}/?tenant_id={self.tenant.id}&property_id={self.property.id}",
+            {"area": self.area_blocked.id},
+            format="json",
+        )
+
+        self.worker_allowed.refresh_from_db()
+        self.assertIn(response.status_code, {400, 403, 404})
+        self.assertEqual(self.worker_allowed.tenant_id, self.tenant.id)
+        self.assertEqual(self.worker_allowed.property_id, self.property.id)
+        self.assertEqual(self.worker_allowed.area_id, self.area_allowed.id)
+
+    def test_assignment_update_cannot_move_record_to_unauthorized_tenant_property_and_area(self):
+        response = self.client.patch(
+            f"/api/assignments/{self.assignment_allowed.id}/?tenant_id={self.tenant.id}&property_id={self.property.id}",
+            {
+                "tenant": self.foreign_tenant.id,
+                "property": self.foreign_property.id,
+                "worker": self.foreign_worker.id,
+                "shift": self.foreign_shift.id,
+            },
+            format="json",
+        )
+
+        self.assignment_allowed.refresh_from_db()
+        self.assertIn(response.status_code, {400, 403, 404})
+        self.assertEqual(self.assignment_allowed.tenant_id, self.tenant.id)
+        self.assertEqual(self.assignment_allowed.property_id, self.property.id)
+        self.assertEqual(self.assignment_allowed.worker_id, self.worker_allowed.id)
+        self.assertEqual(self.assignment_allowed.shift_id, self.shift_allowed.id)
+
+    def test_assignment_update_cannot_move_record_to_unpermitted_area(self):
+        response = self.client.patch(
+            f"/api/assignments/{self.assignment_allowed.id}/?tenant_id={self.tenant.id}&property_id={self.property.id}",
+            {
+                "worker": self.worker_blocked.id,
+                "shift": self.shift_blocked.id,
+                "date": "2026-04-05",
+            },
+            format="json",
+        )
+
+        self.assignment_allowed.refresh_from_db()
+        self.assertIn(response.status_code, {400, 403, 404})
+        self.assertEqual(self.assignment_allowed.tenant_id, self.tenant.id)
+        self.assertEqual(self.assignment_allowed.property_id, self.property.id)
+        self.assertEqual(self.assignment_allowed.worker_id, self.worker_allowed.id)
+        self.assertEqual(self.assignment_allowed.shift_id, self.shift_allowed.id)
+        self.assertEqual(self.assignment_allowed.date, date(2026, 4, 4))
 
     def test_supervisor_cannot_assign_in_unpermitted_area(self):
         response = self.client.post(

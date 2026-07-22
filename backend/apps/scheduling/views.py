@@ -5,7 +5,7 @@ from django.db import IntegrityError
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 
 from apps.audit.services import AuditService
@@ -76,6 +76,14 @@ class ScheduleAssignmentViewSet(viewsets.ModelViewSet):
             )
             queryset = queryset.filter(property_id__in=property_ids)
 
+        area_ids = PermissionService.get_accessible_area_ids(
+            self.request.user,
+            ctx.tenant,
+            ctx.property,
+            action="can_view",
+        )
+        queryset = queryset.filter(worker__area_id__in=area_ids)
+
         date_from = self.request.query_params.get("date_from")
         date_to = self.request.query_params.get("date_to")
         if date_from:
@@ -95,9 +103,21 @@ class ScheduleAssignmentViewSet(viewsets.ModelViewSet):
         ensure_property_action(request, tenant, property_obj, "can_schedule")
 
         worker = serializer.validated_data["worker"]
-        if worker.property_id != property_obj.id:
-            raise PermissionDenied("Worker no pertenece a la sede seleccionada.")
+        shift = serializer.validated_data.get("shift")
+        special_state = serializer.validated_data.get("special_state")
+        if property_obj.tenant_id != tenant.id:
+            raise ValidationError("La sede no pertenece al tenant seleccionado.")
+        if worker.tenant_id != tenant.id or worker.property_id != property_obj.id:
+            raise PermissionDenied("El trabajador no pertenece al tenant y sede seleccionados.")
+        if shift and (shift.tenant_id != tenant.id or shift.property_id != property_obj.id):
+            raise PermissionDenied("El turno no pertenece al tenant y sede seleccionados.")
+        if special_state and (
+            special_state.tenant_id != tenant.id or special_state.property_id != property_obj.id
+        ):
+            raise PermissionDenied("El estado especial no pertenece al tenant y sede seleccionados.")
         ensure_area_schedule(request, tenant, property_obj, worker.area)
+        if shift:
+            ensure_area_schedule(request, tenant, property_obj, shift.area)
 
         if MonthClosureService.is_closed(
             tenant=tenant,
@@ -115,8 +135,8 @@ class ScheduleAssignmentViewSet(viewsets.ModelViewSet):
             property_obj=property_obj,
             worker=worker,
             date=assignment_date,
-            shift=serializer.validated_data.get("shift"),
-            special_state=serializer.validated_data.get("special_state"),
+            shift=shift,
+            special_state=special_state,
             user=request.user if request.user.is_authenticated else None,
         )
         return Response(
@@ -132,11 +152,37 @@ class ScheduleAssignmentViewSet(viewsets.ModelViewSet):
         ensure_module_enabled(self.request, tenant, self.module_key)
         ensure_property_action(self.request, tenant, property_obj, "can_schedule")
         ensure_area_schedule(self.request, tenant, property_obj, instance.worker.area)
+
+        target_tenant = serializer.validated_data.get("tenant", instance.tenant)
+        target_property = serializer.validated_data.get("property", instance.property)
+        target_worker = serializer.validated_data.get("worker", instance.worker)
+        target_shift = serializer.validated_data.get("shift", instance.shift)
+        target_special_state = serializer.validated_data.get("special_state", instance.special_state)
+        target_date = serializer.validated_data.get("date", instance.date)
+        if target_property.tenant_id != target_tenant.id:
+            raise ValidationError("La sede no pertenece al tenant seleccionado.")
+        if target_worker.tenant_id != target_tenant.id or target_worker.property_id != target_property.id:
+            raise ValidationError("El trabajador no pertenece al tenant y sede seleccionados.")
+        if target_shift and (
+            target_shift.tenant_id != target_tenant.id or target_shift.property_id != target_property.id
+        ):
+            raise ValidationError("El turno no pertenece al tenant y sede seleccionados.")
+        if target_special_state and (
+            target_special_state.tenant_id != target_tenant.id
+            or target_special_state.property_id != target_property.id
+        ):
+            raise ValidationError("El estado especial no pertenece al tenant y sede seleccionados.")
+        ensure_tenant_roles(self.request, target_tenant, ["admin", "operator", "supervisor"])
+        ensure_module_enabled(self.request, target_tenant, self.module_key)
+        ensure_property_action(self.request, target_tenant, target_property, "can_schedule")
+        ensure_area_schedule(self.request, target_tenant, target_property, target_worker.area)
+        if target_shift:
+            ensure_area_schedule(self.request, target_tenant, target_property, target_shift.area)
         if MonthClosureService.is_closed(
-            tenant=tenant,
-            property_obj=property_obj,
-            year=instance.date.year,
-            month=instance.date.month,
+            tenant=target_tenant,
+            property_obj=target_property,
+            year=target_date.year,
+            month=target_date.month,
         ):
             raise PermissionDenied("El mes esta cerrado para esta sede.")
         serializer.save(updated_by=self.request.user if self.request.user.is_authenticated else None)

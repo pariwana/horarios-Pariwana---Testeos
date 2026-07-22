@@ -15,7 +15,7 @@ from apps.buk_exports.models import BukExportConfig, BukExportLog, BukTemplateCo
 from apps.buk_exports.services import BukExportService, BukValidationService
 from apps.modules.models import ModuleActivation
 from apps.tenants.models import Property, Tenant, TenantSupportAccessSession
-from apps.users.models import RoleChoices, User, UserPropertyPermission, UserTenantRole
+from apps.users.models import RoleChoices, User, UserAreaPermission, UserPropertyPermission, UserTenantRole
 from apps.workers.models import Area, Shift, SpecialState, Worker
 from apps.scheduling.models import ScheduleAssignment
 
@@ -332,6 +332,139 @@ class BukExportAreaFilterApiTests(TestCase):
         rows = response.json()["rows"]
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["name"], "Mario Soto")
+
+
+class BukExportPermissionScopeRegressionTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.tenant = Tenant.objects.create(name="Tenant BUK permisos", slug="tenant-buk-permisos")
+        self.property = Property.objects.create(
+            tenant=self.tenant,
+            name="Sede BUK permisos",
+            slug="sede-buk-permisos",
+        )
+        self.area_allowed = Area.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            name="Recepcion",
+        )
+        self.area_blocked = Area.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            name="Bar",
+        )
+        shift_allowed = Shift.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            area=self.area_allowed,
+            name="Recepcion-M",
+            buk_code="REC-M",
+            start_time=time(6, 0),
+            end_time=time(14, 0),
+        )
+        shift_blocked = Shift.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            area=self.area_blocked,
+            name="Bar-T",
+            buk_code="BAR-T",
+            start_time=time(14, 0),
+            end_time=time(22, 0),
+        )
+        self.worker_allowed = Worker.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            document_number="20000001",
+            first_name="Ana",
+            last_name="Permitida",
+            area=self.area_allowed,
+            active=True,
+        )
+        self.worker_blocked = Worker.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            document_number="20000002",
+            first_name="Bruno",
+            last_name="Bloqueado",
+            area=self.area_blocked,
+            active=True,
+        )
+        ScheduleAssignment.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            worker=self.worker_allowed,
+            date=date(2026, 4, 8),
+            shift=shift_allowed,
+        )
+        ScheduleAssignment.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            worker=self.worker_blocked,
+            date=date(2026, 4, 8),
+            shift=shift_blocked,
+        )
+        self.supervisor = User.objects.create_user(
+            email="buk-area-supervisor@pariwana.test",
+            password="StrongPass123",
+        )
+        UserTenantRole.objects.create(
+            user=self.supervisor,
+            tenant=self.tenant,
+            role=RoleChoices.SUPERVISOR,
+        )
+        UserPropertyPermission.objects.create(
+            user=self.supervisor,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+            can_export_buk=True,
+        )
+        UserAreaPermission.objects.create(
+            user=self.supervisor,
+            tenant=self.tenant,
+            property=self.property,
+            area=self.area_allowed,
+            can_view=True,
+            can_schedule=True,
+        )
+        ModuleActivation.objects.create(tenant=self.tenant, module_key="buk_export", is_enabled=True)
+        self.client.force_authenticate(user=self.supervisor)
+
+    def _export(self, **extra_payload):
+        payload = {
+            "tenant_id": self.tenant.id,
+            "property_id": self.property.id,
+            "date_from": "2026-04-08",
+            "date_to": "2026-04-08",
+            "format": "csv",
+        }
+        payload.update(extra_payload)
+        return self.client.post("/api/buk/export/", payload, format="json")
+
+    def test_supervisor_cannot_export_explicit_unpermitted_area(self):
+        response = self._export(area_ids=[self.area_blocked.id])
+
+        self.assertEqual(response.status_code, 403, msg=response.content)
+        self.assertEqual(BukExportLog.objects.filter(tenant=self.tenant).count(), 0)
+        self.assertNotIn(b"Bruno Bloqueado", response.content)
+
+    def test_supervisor_cannot_export_worker_id_outside_permitted_area(self):
+        response = self._export(worker_ids=[self.worker_blocked.id])
+
+        self.assertEqual(response.status_code, 403, msg=response.content)
+        self.assertEqual(BukExportLog.objects.filter(tenant=self.tenant).count(), 0)
+        self.assertNotIn(b"Bruno Bloqueado", response.content)
+
+    def test_omitting_area_ids_keeps_export_within_supervisor_area_scope(self):
+        response = self._export()
+
+        self.assertEqual(response.status_code, 200, msg=response.content)
+        content = response.content.decode("utf-8")
+        self.assertIn("Ana Permitida", content)
+        self.assertNotIn("Bruno Bloqueado", content)
+        export_log = BukExportLog.objects.get(tenant=self.tenant)
+        self.assertEqual(export_log.property_id, self.property.id)
+        self.assertEqual(export_log.generated_by_id, self.supervisor.id)
 
 
 class BukTemplateCompareApiTests(TestCase):
