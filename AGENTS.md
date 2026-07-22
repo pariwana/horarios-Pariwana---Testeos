@@ -1,75 +1,119 @@
 # AGENTS.md
 
 ## Proyecto
-Aplicación interna de Pariwana Hostels para gestión de horarios y generación del reporte BUK.
 
-## Objetivo principal
-La prioridad absoluta es generar correctamente el archivo XLSX de carga de turnos para BUK usando como referencia la pestaña "Reporte carga BUK" del archivo "PRUEBA HORARIOS GENERALES 2026".
+Pariwana Scheduler es una aplicación interna para gestionar trabajadores, áreas,
+turnos, estados especiales, asignaciones de horarios y exportaciones BUK.
 
-## Stack
-Backend:
-- Django
-- Django REST Framework
-- PostgreSQL
-- OpenPyXL
-- django-environ
+Estado y contexto:
 
-Frontend:
-- React + Vite o Django templates + HTMX, según decisión aprobada.
+- Tenant inicial: Pariwana Hostels.
+- Sedes: Lima y Cusco.
+- Estado: producción y estabilización.
+- Usuarios: administración, operadores y supervisores.
 
-## Reglas de trabajo
-- No empezar a programar sin plan aprobado.
-- No asumir el formato BUK.
-- Analizar primero el Excel "PRUEBA HORARIOS GENERALES 2026".
-- Usar la pestaña "Reporte carga BUK" como referencia del exportador.
-- Priorizar exactitud del XLSX BUK sobre velocidad.
-- Mantener arquitectura modular y escalable.
-- Respetar multi-tenant.
-- Pariwana Hostels es el tenant inicial.
-- Pariwana Lima y Pariwana Cusco son sedes.
-- Los permisos deben validarse por rol, tenant, sede, área y módulo.
-- No hardcodear credenciales.
-- Usar .env y .env.example.
-- Registrar auditoría en acciones críticas.
-- Escribir o actualizar tests para cambios relevantes.
-- No eliminar datos sin confirmación explícita.
+Prioridades: no romper producción, mantener permisos e integridad tenant–sede–área,
+asegurar la exactitud BUK, priorizar UX mobile y hacer cambios pequeños, simples
+y verificables.
+
+## Stack real
+
+- Python y Django 5.
+- Django REST Framework.
+- PostgreSQL.
+- Django Templates, JavaScript y CSS.
+- OpenPyXL y ReportLab.
+- Docker, Docker Compose, Gunicorn y WhiteNoise.
+- GitHub Actions, GHCR y servidor Linux.
+
+No existe frontend Node, React, Vite ni uso comprobado de HTMX. No ejecutar comandos
+npm salvo que el stack cambie mediante una tarea aprobada.
+
+## Arquitectura
+
+Apps principales: `tenants`, `users`, `workers`, `scheduling`, `buk_exports`,
+`imports`, `audit`, `month_closure`, `modules` y `webui`.
+
+- Mantener separación funcional por apps.
+- Colocar la lógica de negocio en servicios reutilizables.
+- Evitar agregar lógica a `webui/views.py` cuando corresponda a una app o servicio.
+- No hacer refactors generales ni cambiar arquitectura sin explicar impacto y
+  recibir aprobación.
+
+## Componentes protegidos
+
+No modificar sin alcance y aprobación explícitos:
+
+- Formato, preview, validador y configuración BUK.
+- `scheduling` y acciones masivas.
+- Importadores.
+- Backup y restauración.
+- Auditoría.
+- Cierre mensual.
+- Migraciones existentes.
+- Configuración, datos y despliegues de producción.
+
+Todo cambio BUK requiere pruebas de regresión y validación obligatoria antes de
+exportar. No afirmar aceptación real de BUK sin comparar con el Excel original o
+realizar una carga controlada aprobada.
+
+## Permisos e integridad
+
+Toda autorización debe validarse en backend por usuario, tenant, sede, área y
+acción. WebUI y API deben compartir la misma política.
+
+- Ocultar botones o menús no constituye autorización.
+- No confiar en IDs ni filtros enviados por el cliente.
+- Filtrar los objetos dentro del alcance autorizado antes de leerlos o modificarlos.
+- Validar el estado resultante al cambiar tenant, sede o área.
+- Mantener coherencia entre tenant–sede, sede–área, área–trabajador,
+  trabajador–asignación, rol–tenant y permisos de sede–área.
+- No permitir que administradores de tenant modifiquen `is_super_admin` o `is_staff`.
+- No administrar usuarios con búsquedas globales sin validar tenant.
+- Toda corrección de permisos requiere tests adversariales, incluidos manipulación
+  de IDs, acceso directo por URL y aislamiento entre sedes y áreas.
+
+## Git, producción y seguridad
+
+- `main` representa producción y un push o merge puede activar despliegue automático.
+- No trabajar directamente en `main`; crear una rama `codex/nombre-corto` por tarea.
+- No hacer push, merge, PR, deploy, force push ni reescritura de historial sin
+  aprobación explícita.
+- No borrar ramas ni mezclar tareas sin aprobación.
+- No modificar workflows, infraestructura o configuración de producción sin aprobación.
+- No tocar secretos, credenciales, datos reales ni eliminar datos.
+
+## Forma de trabajo y UX
+
+- Para tareas grandes o críticas, presentar primero un plan breve.
+- Diagnosticar antes de corregir cuando la causa no sea evidente.
+- Leer solo los archivos necesarios y usar búsquedas puntuales.
+- Mantener cambios pequeños; no implementar mejoras adicionales ni tocar archivos
+  no relacionados.
 - No instalar dependencias nuevas sin justificarlo.
+- Todo cambio visual debe revisarse mobile-first y mantener desktop funcional.
+- Priorizar formularios apilados, botones táctiles, acciones visibles, mensajes
+  claros y ausencia de scroll horizontal incómodo.
+- Usar como referencia mobile 360 × 780 px.
 
-## Módulos iniciales
-- Tenants
-- Sedes
-- Usuarios y permisos
-- Módulos activables
-- Trabajadores
-- Áreas
-- Turnos
-- Estados especiales
-- Asignación de horarios
-- Control próximos 15 días
-- Validador BUK
-- Vista previa BUK
-- Exportador BUK XLSX
-- Importador Excel
-- Auditoría
-- Cierre de mes
+## Validaciones y cierre
 
-## Comandos backend esperados
-- python manage.py makemigrations --check
-- python manage.py migrate
-- python manage.py test
-- python manage.py runserver
+Ejecutar validaciones proporcionales al riesgo. Antes de comandos, confirmar el
+entorno y que no se conecta a producción; no aplicar migraciones ni iniciar Docker
+si puede ejecutar migraciones automáticamente sin revisar el riesgo.
 
-## Comandos frontend esperados
-- npm install
-- npm run dev
-- npm run build
-- npm test
+Comandos habituales desde `backend`, según aplique:
 
-## Criterio de terminado
-Una tarea solo está lista si:
-- Los tests relevantes pasan.
-- No hay errores de sintaxis.
-- El cambio respeta permisos por tenant, sede y área.
-- El módulo se puede activar/desactivar si corresponde.
-- El XLSX BUK se genera con estructura compatible con "Reporte carga BUK".
-- El cambio queda documentado cuando afecta comportamiento.
+```bash
+python manage.py check
+python manage.py test [app_o_test_especifico]
+python -m compileall [ruta_o_app]
+python manage.py makemigrations --check --dry-run
+```
+
+Una tarea está lista cuando los tests relevantes pasan, no hay errores evidentes,
+se respetan permisos e integridad, se revisa el flujo principal y mobile cuando
+corresponde, y se documenta cualquier limitación.
+
+Entrega breve obligatoria: qué se hizo, por qué, cómo probarlo, riesgos o pendientes
+y siguiente paso recomendado.
