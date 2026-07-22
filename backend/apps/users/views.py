@@ -144,12 +144,22 @@ class UserViewSet(TenantAdminScopedViewSet):
             raise PermissionDenied("tenant_id es requerido para editar usuarios.")
         if tenant:
             self._ensure_manage(tenant)
+            if (
+                not PermissionService.is_super_admin(self.request.user)
+                and UserTenantRole.objects.filter(user=serializer.instance).exclude(tenant=tenant).exists()
+            ):
+                raise PermissionDenied("No se puede modificar globalmente una cuenta compartida entre tenants.")
         serializer.save()
 
     def perform_destroy(self, instance):
         tenant = self._get_tenant()
         if tenant:
             self._ensure_manage(tenant)
+            if (
+                not PermissionService.is_super_admin(self.request.user)
+                and UserTenantRole.objects.filter(user=instance).exclude(tenant=tenant).exists()
+            ):
+                raise PermissionDenied("No se puede eliminar globalmente una cuenta compartida entre tenants.")
         elif not PermissionService.is_super_admin(self.request.user):
             raise PermissionDenied("tenant_id es requerido para eliminar usuarios.")
         instance.delete()
@@ -204,6 +214,8 @@ class UserPropertyPermissionViewSet(TenantAdminScopedViewSet):
 
     def perform_update(self, serializer):
         self._ensure_manage(serializer.instance.tenant)
+        target_tenant = serializer.validated_data.get("tenant", serializer.instance.tenant)
+        self._ensure_manage(target_tenant)
         serializer.save()
 
     def perform_destroy(self, instance):

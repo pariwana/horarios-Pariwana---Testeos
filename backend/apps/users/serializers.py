@@ -39,6 +39,24 @@ class UserSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["created_at", "updated_at"]
 
+    def validate(self, attrs):
+        request = self.context.get("request")
+        requester = getattr(request, "user", None)
+        if requester is not None and not getattr(requester, "is_super_admin", False):
+            protected_fields = ("is_super_admin", "is_staff")
+            invalid_fields = []
+            for field in protected_fields:
+                if field not in attrs:
+                    continue
+                current_value = getattr(self.instance, field, False) if self.instance else False
+                if attrs[field] != current_value:
+                    invalid_fields.append(field)
+            if invalid_fields:
+                raise serializers.ValidationError(
+                    {field: "Solo un superadministrador global puede modificar este campo." for field in invalid_fields}
+                )
+        return attrs
+
     def create(self, validated_data):
         password = validated_data.pop("password", None)
         user = User(**validated_data)
@@ -73,8 +91,12 @@ class UserPropertyPermissionSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         tenant = attrs.get("tenant") or self.instance.tenant
         property_obj = attrs.get("property") or self.instance.property
+        user = attrs.get("user") or self.instance.user
         if property_obj.tenant_id != tenant.id:
             raise serializers.ValidationError("La sede no pertenece al tenant.")
+        user_tenant_roles = UserTenantRole.objects.filter(user=user)
+        if user_tenant_roles.exists() and not user_tenant_roles.filter(tenant=tenant).exists():
+            raise serializers.ValidationError("El usuario no pertenece al tenant.")
         return attrs
 
 

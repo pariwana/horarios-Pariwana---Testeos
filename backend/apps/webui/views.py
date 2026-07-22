@@ -294,6 +294,19 @@ def _sync_user_property_permissions(*, user, tenant, properties, permission_payl
         UserAreaPermission.objects.filter(user=user, tenant=tenant).exclude(property_id__in=selected_ids).delete()
 
 
+def _get_exclusive_tenant_user(*, tenant, user_id):
+    tenant_role = (
+        UserTenantRole.objects.select_related("user")
+        .filter(tenant=tenant, user_id=user_id)
+        .first()
+    )
+    if tenant_role is None:
+        return None, "Usuario no encontrado en este tenant."
+    if UserTenantRole.objects.filter(user=tenant_role.user).exclude(tenant=tenant).exists():
+        return None, "No se puede modificar globalmente una cuenta compartida entre tenants."
+    return tenant_role.user, None
+
+
 def _get_role_profile_from_request(request, tenant):
     role_profile_id = str(request.POST.get("role_profile_id", "")).strip()
     if not role_profile_id.isdigit():
@@ -8427,9 +8440,9 @@ def users_permissions_page(request):
             if not user_id.isdigit():
                 messages.error(request, "Usuario invalido.")
                 return redirect("webui-users-permissions")
-            target_user = User.objects.filter(id=int(user_id)).first()
+            target_user, target_error = _get_exclusive_tenant_user(tenant=tenant, user_id=int(user_id))
             if target_user is None:
-                messages.error(request, "Usuario no encontrado.")
+                messages.error(request, target_error)
                 return redirect("webui-users-permissions")
 
             before_user = _audit_snapshot(target_user, ["email", "first_name", "last_name", "is_active", "is_super_admin"])
@@ -8504,9 +8517,9 @@ def users_permissions_page(request):
             if not user_id.isdigit():
                 messages.error(request, "Usuario invalido.")
                 return redirect("webui-users-permissions")
-            target_user = User.objects.filter(id=int(user_id)).first()
+            target_user, target_error = _get_exclusive_tenant_user(tenant=tenant, user_id=int(user_id))
             if target_user is None:
-                messages.error(request, "Usuario no encontrado.")
+                messages.error(request, target_error)
                 return redirect("webui-users-permissions")
             if target_user.is_super_admin:
                 messages.error(request, "No se puede restablecer la clave de un Super Administrador desde esta pantalla.")
@@ -8547,9 +8560,9 @@ def users_permissions_page(request):
             if not user_id.isdigit():
                 messages.error(request, "Usuario invalido.")
                 return redirect("webui-users-permissions")
-            target_user = User.objects.filter(id=int(user_id)).first()
+            target_user, target_error = _get_exclusive_tenant_user(tenant=tenant, user_id=int(user_id))
             if target_user is None:
-                messages.error(request, "Usuario no encontrado.")
+                messages.error(request, target_error)
                 return redirect("webui-users-permissions")
             if target_user.id == request.user.id:
                 messages.error(request, "No puedes desactivar tu propio usuario desde esta pantalla.")
@@ -8581,9 +8594,9 @@ def users_permissions_page(request):
             if not user_id.isdigit():
                 messages.error(request, "Usuario invalido.")
                 return redirect("webui-users-permissions")
-            target_user = User.objects.filter(id=int(user_id)).first()
+            target_user, target_error = _get_exclusive_tenant_user(tenant=tenant, user_id=int(user_id))
             if target_user is None:
-                messages.error(request, "Usuario no encontrado.")
+                messages.error(request, target_error)
                 return redirect("webui-users-permissions")
             if target_user.is_super_admin:
                 messages.error(request, "No se puede reactivar un Super Administrador desde esta pantalla.")
@@ -8612,9 +8625,9 @@ def users_permissions_page(request):
             if not user_id.isdigit():
                 messages.error(request, "Usuario invalido.")
                 return redirect("webui-users-permissions")
-            target_user = User.objects.filter(id=int(user_id)).first()
+            target_user, target_error = _get_exclusive_tenant_user(tenant=tenant, user_id=int(user_id))
             if target_user is None:
-                messages.error(request, "Usuario no encontrado.")
+                messages.error(request, target_error)
                 return redirect("webui-users-permissions")
             if target_user.id == request.user.id:
                 messages.error(request, "No puedes borrar definitivamente tu propio usuario desde esta pantalla.")
