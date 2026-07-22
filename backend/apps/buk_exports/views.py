@@ -6,6 +6,7 @@ import csv
 from django.http import HttpResponse
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 
 from apps.audit.services import AuditService
@@ -14,6 +15,7 @@ from apps.buk_exports.serializers import BukRangeSerializer, BukTemplateCompareS
 from apps.buk_exports.services import BukExportService, BukValidationService
 from apps.common.access import ensure_module_enabled, ensure_property_action, ensure_tenant_roles, resolve_access_context
 from apps.users.services import PermissionService
+from apps.workers.models import Worker
 
 
 class BukExportViewSet(viewsets.ViewSet):
@@ -52,6 +54,39 @@ class BukExportViewSet(viewsets.ViewSet):
             if text.isdigit():
                 result.append(int(text))
         return result
+
+    def _resolve_export_scope(self, request, *, tenant, property_obj):
+        requested_area_ids = self._area_ids_from_request(request)
+        requested_worker_ids = self._worker_ids_from_request(request)
+        authorized_area_ids = set(
+            PermissionService.get_accessible_area_ids(
+                request.user,
+                tenant,
+                property_obj,
+                action="can_view",
+            )
+        )
+
+        if set(requested_area_ids) - authorized_area_ids:
+            raise PermissionDenied("Una o más áreas no pertenecen a tu alcance autorizado.")
+
+        effective_area_ids = requested_area_ids or sorted(authorized_area_ids)
+        if not effective_area_ids and not PermissionService.user_can_tenant_role(request.user, tenant, ["admin"]):
+            raise PermissionDenied("No tienes áreas autorizadas para exportar BUK en esta sede.")
+
+        if requested_worker_ids:
+            authorized_worker_ids = set(
+                Worker.objects.filter(
+                    id__in=requested_worker_ids,
+                    tenant=tenant,
+                    property=property_obj,
+                    area_id__in=effective_area_ids,
+                ).values_list("id", flat=True)
+            )
+            if set(requested_worker_ids) - authorized_worker_ids:
+                raise PermissionDenied("Uno o más trabajadores no pertenecen al alcance autorizado.")
+
+        return effective_area_ids, requested_worker_ids
 
     @staticmethod
     def _is_compatible_filter(raw_value):
@@ -105,8 +140,11 @@ class BukExportViewSet(viewsets.ViewSet):
     def validate_range(self, request):
         serializer, tenant, property_obj = self._resolve(request)
         ensure_module_enabled(request, tenant, "buk_validator")
-        area_ids = self._area_ids_from_request(request)
-        worker_ids = self._worker_ids_from_request(request)
+        area_ids, worker_ids = self._resolve_export_scope(
+            request,
+            tenant=tenant,
+            property_obj=property_obj,
+        )
         issues = BukValidationService.validate_assignments(
             tenant=tenant,
             property_obj=property_obj,
@@ -127,8 +165,11 @@ class BukExportViewSet(viewsets.ViewSet):
     def preview(self, request):
         serializer, tenant, property_obj = self._resolve(request)
         ensure_module_enabled(request, tenant, "buk_preview")
-        area_ids = self._area_ids_from_request(request)
-        worker_ids = self._worker_ids_from_request(request)
+        area_ids, worker_ids = self._resolve_export_scope(
+            request,
+            tenant=tenant,
+            property_obj=property_obj,
+        )
         rows = BukExportService.build_preview_rows(
             tenant=tenant,
             property_obj=property_obj,
@@ -146,8 +187,11 @@ class BukExportViewSet(viewsets.ViewSet):
 
         output_format = str(request.data.get("format", "xlsx")).strip().lower()
         export_with_observations = self._as_bool(request.data.get("export_with_observations"))
-        area_ids = self._area_ids_from_request(request)
-        worker_ids = self._worker_ids_from_request(request)
+        area_ids, worker_ids = self._resolve_export_scope(
+            request,
+            tenant=tenant,
+            property_obj=property_obj,
+        )
         issues = BukValidationService.validate_assignments(
             tenant=tenant,
             property_obj=property_obj,
@@ -223,8 +267,11 @@ class BukExportViewSet(viewsets.ViewSet):
     def compare_template(self, request):
         serializer, tenant, property_obj = self._resolve(request, serializer_class=BukTemplateCompareSerializer)
         ensure_module_enabled(request, tenant, "buk_preview")
-        area_ids = self._area_ids_from_request(request)
-        worker_ids = self._worker_ids_from_request(request)
+        area_ids, worker_ids = self._resolve_export_scope(
+            request,
+            tenant=tenant,
+            property_obj=property_obj,
+        )
         candidate = BukExportService.generate_xlsx_bytes(
             tenant=tenant,
             property_obj=property_obj,
