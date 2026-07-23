@@ -1569,6 +1569,24 @@ class WebUiSchedulingTests(TestCase):
         self.assertContains(response, "1 de 2 asignados")
         self.assertContains(response, "1 pendientes")
 
+    def test_scheduling_page_renders_shared_assignment_identifiers_for_mobile_views(self):
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+
+        response = self.client.get(
+            reverse("webui-scheduling"),
+            {"month": "2026-06", "focus_date": "2026-06-15"},
+        )
+
+        identifier = (
+            f'data-assignment-worker-id="{self.worker.id}" '
+            'data-assignment-date="2026-06-15"'
+        )
+        self.assertEqual(response.content.decode().count(identifier), 3)
+
     def test_scheduling_mobile_day_navigation_stays_within_selected_month(self):
         self.client.force_login(self.user)
         session = self.client.session

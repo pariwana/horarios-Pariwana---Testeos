@@ -1602,7 +1602,7 @@
             {% for cell in row.cells %}
               <td data-day-date="{{ cell.date|date:'Y-m-d' }}" class="{% if cell.is_focus %}focus-day-cell{% endif %} {% if cell.is_recent_edit %}recent-edit-cell{% endif %}">
                 {% if cell.editable %}
-                  <form method="post" action="/app/scheduling/assign/" class="scheduling-edit-form" data-ajax-assign>
+                  <form method="post" action="/app/scheduling/assign/" class="scheduling-edit-form" data-ajax-assign data-assignment-worker-id="{{ row.worker.id }}" data-assignment-date="{{ cell.date|date:'Y-m-d' }}">
                     {% csrf_token %}
                     <input type="hidden" name="month" value="{{ month_value }}">
                     <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
@@ -1693,7 +1693,7 @@
                 <span class="worker-subtitle">{{ row.worker.document_number }}</span>
               </div>
               {% if row.cell.editable %}
-                <form method="post" action="/app/scheduling/assign/" class="scheduling-edit-form" data-ajax-assign data-day-assignment>
+                <form method="post" action="/app/scheduling/assign/" class="scheduling-edit-form" data-ajax-assign data-day-assignment data-assignment-worker-id="{{ row.worker.id }}" data-assignment-date="{{ row.cell.date|date:'Y-m-d' }}">
                   {% csrf_token %}
                   <input type="hidden" name="month" value="{{ month_value }}">
                   <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
@@ -1753,7 +1753,7 @@
                         <span>{{ cell.date|date:'d-m-Y' }}</span>
                       </div>
                       {% if cell.editable %}
-                        <form method="post" action="/app/scheduling/assign/" class="scheduling-edit-form" data-ajax-assign>
+                        <form method="post" action="/app/scheduling/assign/" class="scheduling-edit-form" data-ajax-assign data-assignment-worker-id="{{ row.worker.id }}" data-assignment-date="{{ cell.date|date:'Y-m-d' }}">
                           {% csrf_token %}
                           <input type="hidden" name="month" value="{{ month_value }}">
                           <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
@@ -1962,6 +1962,39 @@
         form.style.setProperty("--assignment-border", color.border);
       }
 
+      function applyConfirmedAssignment(form, payload) {
+        var select = form.querySelector('select[name="assignment_value"]');
+        var code = form.querySelector(".assignment-code");
+        var copyButton = form.querySelector("[data-open-copy-assignment]");
+        var workDateInput = form.querySelector('input[name="work_date"]');
+        if (!select || !code) return;
+
+        var assignmentValue = payload.assignment_value || "";
+        select.value = assignmentValue;
+        select.setAttribute("data-last-value", assignmentValue);
+        code.textContent = payload.display_code || "-";
+        code.classList.toggle("is-empty", Boolean(payload.is_empty));
+        if (copyButton) {
+          copyButton.hidden = Boolean(payload.is_empty);
+          copyButton.setAttribute("data-assignment-value", assignmentValue);
+          copyButton.setAttribute("data-display-code", payload.display_code || "");
+          if (workDateInput) copyButton.setAttribute("data-source-date", workDateInput.value || "");
+        }
+        paintAssignment(form, assignmentValue);
+      }
+
+      function syncEquivalentAssignments(sourceForm, payload) {
+        var workerId = sourceForm.getAttribute("data-assignment-worker-id");
+        var workDate = sourceForm.getAttribute("data-assignment-date");
+        if (!workerId || !workDate) return;
+        document.querySelectorAll("form[data-ajax-assign]").forEach(function (form) {
+          if (form === sourceForm) return;
+          if (form.getAttribute("data-assignment-worker-id") !== workerId) return;
+          if (form.getAttribute("data-assignment-date") !== workDate) return;
+          applyConfirmedAssignment(form, payload);
+        });
+      }
+
       var focusDate = params.get("focus_date") || "";
       if (focusDate) {
         var wrap = document.getElementById("scheduling-table-wrap");
@@ -1976,8 +2009,6 @@
         var select = form.querySelector('select[name="assignment_value"]');
         var code = form.querySelector(".assignment-code");
         var status = form.querySelector(".assignment-status");
-        var copyButton = form.querySelector("[data-open-copy-assignment]");
-        var workDateInput = form.querySelector('input[name="work_date"]');
         var requestToken = 0;
         if (!select || !code || !status) return;
         paintAssignment(form, select.value);
@@ -2017,27 +2048,8 @@
             })
             .then(function (payload) {
               if (currentToken !== requestToken) return;
-              code.textContent = payload.display_code || "-";
-              if (payload.is_empty) {
-                code.classList.add("is-empty");
-                if (copyButton) {
-                  copyButton.hidden = true;
-                  copyButton.setAttribute("data-assignment-value", "");
-                  copyButton.setAttribute("data-display-code", "");
-                }
-              } else {
-                code.classList.remove("is-empty");
-                if (copyButton) {
-                  copyButton.hidden = false;
-                  copyButton.setAttribute("data-assignment-value", payload.assignment_value || select.value || "");
-                  copyButton.setAttribute("data-display-code", payload.display_code || "");
-                  if (workDateInput) {
-                    copyButton.setAttribute("data-source-date", workDateInput.value || "");
-                  }
-                }
-              }
-              select.setAttribute("data-last-value", payload.assignment_value || select.value || "");
-              paintAssignment(form, payload.assignment_value || select.value || "");
+              applyConfirmedAssignment(form, payload);
+              syncEquivalentAssignments(form, payload);
               refreshMobileMissingIndicators();
               refreshDailySummary();
               setState("is-saved", "Guardado");
