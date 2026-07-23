@@ -253,6 +253,63 @@
     .scheduling-mobile-list {
       display: none;
     }
+    .scheduling-mobile-day-view {
+      display: none;
+    }
+    .mobile-day-context {
+      display: grid;
+      gap: 10px;
+    }
+    .mobile-day-context-title {
+      display: grid;
+      gap: 2px;
+    }
+    .mobile-day-context-title strong { font-size: 17px; color: var(--schedule-ink); }
+    .mobile-day-context-title span { font-size: 14px; color: var(--schedule-muted); }
+    .mobile-view-switcher { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .scheduling-mobile-view-switcher { display: none; }
+    .mobile-view-switcher button,
+    .mobile-day-navigation a,
+    .mobile-date-picker input,
+    .mobile-day-card select,
+    .mobile-day-card .copy-assignment-button { min-height: 44px; font-size: 16px; }
+    .mobile-view-switcher button {
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      background: #ffffff;
+      color: #334155;
+      font-weight: 700;
+    }
+    .mobile-view-switcher button.is-active { border-color: #0f766e; background: #e6fffb; color: #115e59; }
+    .mobile-day-navigation { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .mobile-day-navigation a {
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+      padding: 8px;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      color: #1f2937;
+      font-weight: 700;
+      text-align: center;
+      text-decoration: none;
+    }
+    .mobile-day-navigation span { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; color: #94a3b8; }
+    .mobile-date-picker { display: grid; gap: 4px; font-size: 14px; font-weight: 700; color: #475569; }
+    .mobile-date-picker input { width: 100%; }
+    .mobile-day-summary { display: flex; gap: 6px; flex-wrap: wrap; font-size: 14px; }
+    .mobile-day-summary .is-assigned { color: #18794e; font-weight: 700; }
+    .mobile-day-summary .is-pending { color: #b42318; font-weight: 700; }
+    .mobile-day-cards { display: grid; gap: 8px; }
+    .mobile-day-card { padding: 12px; border: 1px solid #dfe5e7; border-radius: 10px; background: #ffffff; }
+    .mobile-day-card.is-unassigned { border-color: #e9b7b7; }
+    .mobile-day-card-header { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+    .mobile-day-card .worker-name { font-size: 16px; }
+    .mobile-day-card .worker-subtitle { margin: 0; font-size: 12px; }
+    .mobile-day-card .scheduling-edit-form { min-width: 0; width: 100%; padding: 4px; }
+    .mobile-day-card .scheduling-edit-form select { min-width: 0; max-width: none; }
+    .mobile-day-card .assignment-code { display: none; }
+    .mobile-day-card .assignment-status { display: block; width: 100%; padding: 2px 4px; font-size: 12px; font-weight: 700; }
     .worker-card {
       border: 1px solid #e5e7eb;
       border-radius: 8px;
@@ -420,12 +477,10 @@
         max-width: 100%;
         min-width: 0;
       }
-      .scheduling-toolbar {
-        position: sticky;
-        top: 56px;
-        z-index: 7;
-        padding: 10px;
-      }
+      .page-header,
+      .scheduling-toolbar,
+      .scheduling-team-report,
+      .scheduling-meta { display: none; }
       .scheduling-filters-form {
         grid-template-columns: minmax(0, 1fr);
         gap: 8px;
@@ -484,6 +539,19 @@
         display: none;
       }
       .scheduling-mobile-list {
+        display: none;
+      }
+      .scheduling-mobile-day-view {
+        display: block;
+      }
+      .scheduling-mobile-view-switcher {
+        display: grid;
+        margin-bottom: 10px;
+      }
+      .scheduling-page.is-mobile-worker-view .scheduling-mobile-day-view {
+        display: none;
+      }
+      .scheduling-page.is-mobile-worker-view .scheduling-mobile-list {
         display: block;
       }
       .scheduling-meta {
@@ -1534,7 +1602,7 @@
             {% for cell in row.cells %}
               <td data-day-date="{{ cell.date|date:'Y-m-d' }}" class="{% if cell.is_focus %}focus-day-cell{% endif %} {% if cell.is_recent_edit %}recent-edit-cell{% endif %}">
                 {% if cell.editable %}
-                  <form method="post" action="/app/scheduling/assign/" class="scheduling-edit-form" data-ajax-assign>
+                  <form method="post" action="/app/scheduling/assign/" class="scheduling-edit-form" data-ajax-assign data-assignment-worker-id="{{ row.worker.id }}" data-assignment-date="{{ cell.date|date:'Y-m-d' }}">
                     {% csrf_token %}
                     <input type="hidden" name="month" value="{{ month_value }}">
                     <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
@@ -1586,6 +1654,70 @@
     </table>
     </div>
 
+    <div class="mobile-view-switcher scheduling-mobile-view-switcher" aria-label="Elegir vista móvil">
+      <button type="button" data-mobile-view="day">Por día</button>
+      <button type="button" data-mobile-view="worker">Por trabajador</button>
+    </div>
+
+    <div class="scheduling-mobile-day-view" aria-label="Vista móvil por día">
+      <div class="mobile-day-context">
+        <div class="mobile-day-context-title">
+          <strong>{{ selected_property.name }} · {{ mobile_area_label }}</strong>
+          <span>{{ selected_date_label }}</span>
+        </div>
+        <div class="mobile-day-navigation">
+          {% if selected_date_prev_value %}
+            <a href="/app/scheduling/?month={{ month_value }}&focus_date={{ selected_date_prev_value }}{% if selected_area_id %}&area_id={{ selected_area_id }}{% endif %}{% if worker_query %}&worker_q={{ worker_query|urlencode }}{% endif %}">‹ Día anterior</a>
+          {% else %}<span>‹ Día anterior</span>{% endif %}
+          {% if selected_date_next_value %}
+            <a href="/app/scheduling/?month={{ month_value }}&focus_date={{ selected_date_next_value }}{% if selected_area_id %}&area_id={{ selected_area_id }}{% endif %}{% if worker_query %}&worker_q={{ worker_query|urlencode }}{% endif %}">Día siguiente ›</a>
+          {% else %}<span>Día siguiente ›</span>{% endif %}
+        </div>
+        <form method="get" action="/app/scheduling/" class="mobile-date-picker">
+          <label for="mobile-focus-date">Seleccionar fecha</label>
+          <input id="mobile-focus-date" type="date" name="focus_date" value="{{ selected_date_value }}" min="{{ month_value }}-01" max="{{ month_value }}-{{ days|length|stringformat:'02d' }}" onchange="this.form.submit()">
+          <input type="hidden" name="month" value="{{ month_value }}">
+          {% if selected_area_id %}<input type="hidden" name="area_id" value="{{ selected_area_id }}">{% endif %}
+          {% if worker_query %}<input type="hidden" name="worker_q" value="{{ worker_query }}">{% endif %}
+        </form>
+        <div class="mobile-day-summary" data-day-summary>
+          <span class="is-assigned" data-day-assigned>{{ selected_day_assigned_count }} de {{ selected_day_cell_rows|length }} asignados</span>
+          <span>·</span>
+          <span class="is-pending" data-day-pending>{{ selected_day_pending_count }} pendientes</span>
+        </div>
+        <div class="mobile-day-cards">
+          {% for row in selected_day_cell_rows %}
+            <article class="mobile-day-card {% if not row.cell.display_code %}is-unassigned{% endif %}" data-day-worker-card>
+              <div class="mobile-day-card-header">
+                <div class="worker-name">{{ row.worker.first_name }} {{ row.worker.last_name }}</div>
+                <span class="worker-subtitle">{{ row.worker.document_number }}</span>
+              </div>
+              {% if row.cell.editable %}
+                <form method="post" action="/app/scheduling/assign/" class="scheduling-edit-form" data-ajax-assign data-day-assignment data-assignment-worker-id="{{ row.worker.id }}" data-assignment-date="{{ row.cell.date|date:'Y-m-d' }}">
+                  {% csrf_token %}
+                  <input type="hidden" name="month" value="{{ month_value }}">
+                  <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
+                  <input type="hidden" name="worker_q" value="{{ worker_query|default:'' }}">
+                  <input type="hidden" name="focus_date" value="{{ selected_date_value }}">
+                  <input type="hidden" name="worker_id" value="{{ row.worker.id }}">
+                  <input type="hidden" name="work_date" value="{{ row.cell.date|date:'Y-m-d' }}">
+                  <select name="assignment_value" aria-label="Horario de {{ row.worker.first_name }} {{ row.worker.last_name }}" data-last-value="{{ row.cell.selected_value|default:'' }}">
+                    <option value="">Sin asignar</option>
+                    {% for shift in row.cell.shift_options %}<option value="shift:{{ shift.id }}" {% if row.cell.selected_shift_id == shift.id %}selected{% endif %}>{{ shift.start_time|time:"H:i" }}–{{ shift.end_time|time:"H:i" }}</option>{% endfor %}
+                    {% for state in row.cell.state_options %}<option value="state:{{ state.id }}" {% if row.cell.selected_state_id == state.id %}selected{% endif %}>{{ state.name }}</option>{% endfor %}
+                  </select>
+                  <span class="assignment-code {% if not row.cell.display_code %}is-empty{% endif %}">{{ row.cell.display_label }}</span>
+                  <span class="assignment-status" aria-live="polite"></span>
+                </form>
+              {% else %}
+                <span class="assignment-code {% if not row.cell.display_code %}is-empty{% endif %}">{{ row.cell.display_label }}</span>
+              {% endif %}
+            </article>
+          {% empty %}<p class="muted">No hay trabajadores activos para este filtro.</p>{% endfor %}
+        </div>
+      </div>
+    </div>
+
     <div class="scheduling-mobile-list" aria-label="Vista movil de asignacion">
       {% for row in rows %}
         {% ifchanged row.worker.area.name %}
@@ -1621,7 +1753,7 @@
                         <span>{{ cell.date|date:'d-m-Y' }}</span>
                       </div>
                       {% if cell.editable %}
-                        <form method="post" action="/app/scheduling/assign/" class="scheduling-edit-form" data-ajax-assign>
+                        <form method="post" action="/app/scheduling/assign/" class="scheduling-edit-form" data-ajax-assign data-assignment-worker-id="{{ row.worker.id }}" data-assignment-date="{{ cell.date|date:'Y-m-d' }}">
                           {% csrf_token %}
                           <input type="hidden" name="month" value="{{ month_value }}">
                           <input type="hidden" name="area_id" value="{{ selected_area_id|default:'' }}">
@@ -1710,6 +1842,28 @@
     (function () {
       var params = new URLSearchParams(window.location.search);
       var postForms = document.querySelectorAll('form[method="post"]');
+      var schedulingPage = document.querySelector(".scheduling-page");
+      var mobileViewButtons = document.querySelectorAll("[data-mobile-view]");
+
+      function setMobileView(view) {
+        if (!schedulingPage) return;
+        var isWorkerView = view === "worker";
+        schedulingPage.classList.toggle("is-mobile-worker-view", isWorkerView);
+        mobileViewButtons.forEach(function (button) {
+          button.classList.toggle("is-active", button.getAttribute("data-mobile-view") === view);
+        });
+        try { window.sessionStorage.setItem("scheduling-mobile-view", view); } catch (error) {}
+      }
+      if (mobileViewButtons.length) {
+        var savedMobileView = "day";
+        try { savedMobileView = window.sessionStorage.getItem("scheduling-mobile-view") || "day"; } catch (error) {}
+        setMobileView(savedMobileView);
+        mobileViewButtons.forEach(function (button) {
+          button.addEventListener("click", function () {
+            setMobileView(button.getAttribute("data-mobile-view"));
+          });
+        });
+      }
 
       function propagateParamToPostForms(paramName) {
         var currentValue = params.get(paramName) || "";
@@ -1749,6 +1903,22 @@
           });
           setDotVisibility(card, hasMissing);
         });
+      }
+
+      function refreshDailySummary() {
+        var cards = document.querySelectorAll("[data-day-worker-card]");
+        if (!cards.length) return;
+        var assigned = 0;
+        cards.forEach(function (card) {
+          var code = card.querySelector(".assignment-code");
+          var isPending = !code || code.classList.contains("is-empty");
+          card.classList.toggle("is-unassigned", isPending);
+          if (!isPending) assigned += 1;
+        });
+        var assignedLabel = document.querySelector("[data-day-assigned]");
+        var pendingLabel = document.querySelector("[data-day-pending]");
+        if (assignedLabel) assignedLabel.textContent = assigned + " de " + cards.length + " asignados";
+        if (pendingLabel) pendingLabel.textContent = (cards.length - assigned) + " pendientes";
       }
 
       var toast = document.querySelector("[data-scheduling-toast]");
@@ -1792,6 +1962,39 @@
         form.style.setProperty("--assignment-border", color.border);
       }
 
+      function applyConfirmedAssignment(form, payload) {
+        var select = form.querySelector('select[name="assignment_value"]');
+        var code = form.querySelector(".assignment-code");
+        var copyButton = form.querySelector("[data-open-copy-assignment]");
+        var workDateInput = form.querySelector('input[name="work_date"]');
+        if (!select || !code) return;
+
+        var assignmentValue = payload.assignment_value || "";
+        select.value = assignmentValue;
+        select.setAttribute("data-last-value", assignmentValue);
+        code.textContent = payload.display_code || "-";
+        code.classList.toggle("is-empty", Boolean(payload.is_empty));
+        if (copyButton) {
+          copyButton.hidden = Boolean(payload.is_empty);
+          copyButton.setAttribute("data-assignment-value", assignmentValue);
+          copyButton.setAttribute("data-display-code", payload.display_code || "");
+          if (workDateInput) copyButton.setAttribute("data-source-date", workDateInput.value || "");
+        }
+        paintAssignment(form, assignmentValue);
+      }
+
+      function syncEquivalentAssignments(sourceForm, payload) {
+        var workerId = sourceForm.getAttribute("data-assignment-worker-id");
+        var workDate = sourceForm.getAttribute("data-assignment-date");
+        if (!workerId || !workDate) return;
+        document.querySelectorAll("form[data-ajax-assign]").forEach(function (form) {
+          if (form === sourceForm) return;
+          if (form.getAttribute("data-assignment-worker-id") !== workerId) return;
+          if (form.getAttribute("data-assignment-date") !== workDate) return;
+          applyConfirmedAssignment(form, payload);
+        });
+      }
+
       var focusDate = params.get("focus_date") || "";
       if (focusDate) {
         var wrap = document.getElementById("scheduling-table-wrap");
@@ -1806,8 +2009,6 @@
         var select = form.querySelector('select[name="assignment_value"]');
         var code = form.querySelector(".assignment-code");
         var status = form.querySelector(".assignment-status");
-        var copyButton = form.querySelector("[data-open-copy-assignment]");
-        var workDateInput = form.querySelector('input[name="work_date"]');
         var requestToken = 0;
         if (!select || !code || !status) return;
         paintAssignment(form, select.value);
@@ -1847,28 +2048,10 @@
             })
             .then(function (payload) {
               if (currentToken !== requestToken) return;
-              code.textContent = payload.display_code || "-";
-              if (payload.is_empty) {
-                code.classList.add("is-empty");
-                if (copyButton) {
-                  copyButton.hidden = true;
-                  copyButton.setAttribute("data-assignment-value", "");
-                  copyButton.setAttribute("data-display-code", "");
-                }
-              } else {
-                code.classList.remove("is-empty");
-                if (copyButton) {
-                  copyButton.hidden = false;
-                  copyButton.setAttribute("data-assignment-value", payload.assignment_value || select.value || "");
-                  copyButton.setAttribute("data-display-code", payload.display_code || "");
-                  if (workDateInput) {
-                    copyButton.setAttribute("data-source-date", workDateInput.value || "");
-                  }
-                }
-              }
-              select.setAttribute("data-last-value", payload.assignment_value || select.value || "");
-              paintAssignment(form, payload.assignment_value || select.value || "");
+              applyConfirmedAssignment(form, payload);
+              syncEquivalentAssignments(form, payload);
               refreshMobileMissingIndicators();
+              refreshDailySummary();
               setState("is-saved", "Guardado");
               showToast("Horario guardado", false);
               window.setTimeout(function () {
