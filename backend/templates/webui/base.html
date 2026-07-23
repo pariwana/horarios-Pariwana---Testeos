@@ -40,17 +40,17 @@
     .nav-group.active > summary { background: var(--accent); color: #ffffff; font-weight: 700; }
     .nav-group a { margin-left: 10px; padding: 8px 10px; color: #cbd5e1; }
     .main { padding: 16px; }
-    .topbar { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .topbar form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 0; }
-    .topbar-context-form { flex: 1 1 auto; min-width: min(100%, 520px); }
+    .topbar { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 12px; display: flex; align-items: end; gap: 16px; flex-wrap: wrap; }
+    .topbar form { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; margin: 0; }
+    .topbar-context { display: flex; min-width: 0; }
+    .topbar-context-form { flex: 0 1 auto; min-width: 0; }
     .context-field { min-width: 0; }
-    .context-value { display: block; min-height: 44px; padding: 12px 0; font-size: 13px; font-weight: 700; }
+    .context-value { display: flex; align-items: center; min-width: 140px; min-height: 44px; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: #f9fafb; font-size: 13px; font-weight: 700; }
     .support-status { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-height: 44px; padding: 6px 8px; border: 1px solid #99f6e4; border-radius: 6px; background: #f0fdfa; font-size: 13px; }
     .support-status strong { color: #115e59; }
-    .topbar-user-actions { display: flex; gap: 10px; align-items: center; justify-content: flex-end; flex-wrap: wrap; margin-left: auto; flex: 0 1 auto; }
+    .topbar-user-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; margin-left: auto; min-width: 0; }
     .topbar-logout-form { flex: 0 0 auto; }
-    .topbar-user { display: grid; gap: 2px; justify-items: end; line-height: 1.2; }
-    .topbar-user-label { font-size: 11px; color: var(--muted); }
+    .topbar-user { min-width: 0; line-height: 1.2; }
     .topbar-user-name { font-size: 13px; font-weight: 700; color: var(--ink); max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; }
     select, input[type="text"], input[type="date"], input[type="email"], input[type="password"], input[type="time"], input[type="number"], input[type="file"] {
@@ -144,9 +144,12 @@
       .main > *, .panel > *, form, details, summary { max-width: 100%; min-width: 0; }
       .main { padding: 10px; }
       .topbar { align-items: stretch; }
-      .topbar-context-form { width: 100%; display: grid; grid-template-columns: 1fr; }
-      .topbar-user-actions { width: 100%; align-items: stretch; }
-      .topbar-user { justify-items: start; flex: 1 1 100%; }
+      .topbar { gap: 12px; }
+      .topbar-context, .topbar-context-form { width: 100%; }
+      .topbar-context-form { display: grid; grid-template-columns: 1fr; gap: 8px; }
+      .topbar-user-actions { width: 100%; align-items: center; justify-content: flex-start; }
+      .topbar-user { flex: 1 1 0; }
+      .topbar-user-actions .support-status { width: 100%; }
       .topbar-user-name { max-width: 100%; }
       .topbar-context-form > div,
       .topbar button,
@@ -205,7 +208,6 @@
         {% endfor %}
         <div class="mobile-nav-actions">
           <div class="mobile-nav-user" title="{{ user.email }}">
-            Usuario
             <strong>
               {% if user.first_name or user.last_name %}
                 {{ user.first_name }} {{ user.last_name }}
@@ -223,7 +225,8 @@
     </aside>
     <main class="main">
       <div class="topbar">
-        <form method="post" action="/app/context/" class="topbar-context-form">
+        <div class="topbar-context">
+          <form method="post" action="/app/context/" class="topbar-context-form">
           {% csrf_token %}
           <input type="hidden" name="next" value="{{ request.path }}">
           {% if show_tenant_selector %}
@@ -259,12 +262,14 @@
             </div>
           {% endif %}
           {% if show_context_apply %}
-            <div style="align-self: end;">
+            <div>
               <button class="primary" type="submit">Aplicar</button>
             </div>
           {% endif %}
-        </form>
-        {% if user.is_super_admin %}
+          </form>
+        </div>
+        <div class="topbar-user-actions">
+          {% if user.is_super_admin %}
           {% if support_session %}
             <div class="support-status">
               <strong>Soporte activo:</strong>
@@ -275,9 +280,7 @@
             <a class="button" href="/app/support/">Soporte</a>
           {% endif %}
         {% endif %}
-        <div class="topbar-user-actions">
           <div class="topbar-user" title="{{ user.email }}">
-            <span class="topbar-user-label">Usuario</span>
             <span class="topbar-user-name">
               {% if user.first_name or user.last_name %}
                 {{ user.first_name }} {{ user.last_name }}
