@@ -1523,6 +1523,69 @@ class WebUiSchedulingTests(TestCase):
         self.assertContains(response, 'aria-label="Vista movil de asignacion"')
         self.assertContains(response, "Lun")
 
+    def test_scheduling_page_prepares_mobile_day_view_with_daily_counts(self):
+        second_worker = Worker.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            area=self.area,
+            document_number="55667788",
+            first_name="Ana",
+            last_name="Perez",
+            active=True,
+        )
+        ScheduleAssignment.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            worker=self.worker,
+            date="2026-06-15",
+            shift=self.shift,
+        )
+        ScheduleAssignment.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            worker=second_worker,
+            date="2026-06-16",
+            special_state=self.state,
+        )
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+
+        response = self.client.get(
+            reverse("webui-scheduling"),
+            {"month": "2026-06", "focus_date": "2026-06-15"},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["selected_date_value"], "2026-06-15")
+        self.assertEqual(response.context["selected_day_assigned_count"], 1)
+        self.assertEqual(response.context["selected_day_pending_count"], 1)
+        self.assertContains(response, 'aria-label="Vista móvil por día"')
+        self.assertContains(response, "Por día")
+        self.assertContains(response, "Luz Mamani")
+        self.assertContains(response, "Ana Perez")
+        self.assertContains(response, "1 de 2 asignados")
+        self.assertContains(response, "1 pendientes")
+
+    def test_scheduling_mobile_day_navigation_stays_within_selected_month(self):
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+
+        response = self.client.get(
+            reverse("webui-scheduling"),
+            {"month": "2026-06", "focus_date": "2026-06-15"},
+        )
+
+        self.assertEqual(response.context["selected_date_prev_value"], "2026-06-14")
+        self.assertEqual(response.context["selected_date_next_value"], "2026-06-16")
+        self.assertContains(response, "focus_date=2026-06-14")
+        self.assertContains(response, "focus_date=2026-06-16")
+
     def test_scheduling_page_keeps_super_admin_context_in_advanced_options(self):
         super_admin = User.objects.create_user(
             email="scheduling-super@pariwana.test",

@@ -1862,6 +1862,28 @@ def scheduling_page(request):
                 "has_missing_assignments": any(not cell["display_code"] for cell in row_cells),
             }
         )
+    selected_date = focus_date or (today if today.year == year and today.month == month else start_date)
+    selected_day_cell_rows = []
+    selected_day_assigned_count = 0
+    for row in rows:
+        cell = next((item for item in row["cells"] if item["date"] == selected_date), None)
+        if cell is None:
+            continue
+        if cell["display_code"]:
+            selected_day_assigned_count += 1
+        selected_day_cell_rows.append({"worker": row["worker"], "cell": cell})
+    selected_day_pending_count = len(selected_day_cell_rows) - selected_day_assigned_count
+    selected_date_prev = selected_date - timedelta(days=1) if selected_date > start_date else None
+    selected_date_next = selected_date + timedelta(days=1) if selected_date < end_date else None
+    weekday_names = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"]
+    month_names = [
+        "enero", "febrero", "marzo", "abril", "mayo", "junio",
+        "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+    ]
+    selected_date_label = (
+        f"{weekday_names[selected_date.weekday()]} {selected_date.day} de "
+        f"{month_names[selected_date.month - 1]}"
+    )
     bulk_worker_options = [row["worker"] for row in rows if row["area_allowed"]]
     if selected_area:
         bulk_shift_options = list(shifts_by_area.get(selected_area.id, []))
@@ -2088,10 +2110,18 @@ def scheduling_page(request):
             "month_next_value": month_next_value,
             "worker_query": worker_query,
             "focus_date_value": focus_date_value,
+            "selected_date_value": selected_date.isoformat(),
+            "selected_date_label": selected_date_label,
+            "selected_date_prev_value": selected_date_prev.isoformat() if selected_date_prev else "",
+            "selected_date_next_value": selected_date_next.isoformat() if selected_date_next else "",
+            "selected_day_cell_rows": selected_day_cell_rows,
+            "selected_day_assigned_count": selected_day_assigned_count,
+            "selected_day_pending_count": selected_day_pending_count,
             "areas": area_queryset,
             "selected_area_id": selected_area.id if selected_area else None,
             "show_area_selector": is_tenant_admin or area_queryset.count() > 1,
             "area_filter_label": "Todas" if is_tenant_admin else "Todas mis áreas",
+            "mobile_area_label": selected_area.name if selected_area else ("Todas las áreas" if is_tenant_admin else "Mis áreas autorizadas"),
             "can_schedule": can_schedule,
             "is_tenant_admin": is_tenant_admin,
             "is_month_closed": is_month_closed,
