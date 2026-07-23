@@ -364,6 +364,16 @@ def _get_property_options(user, tenant, support_session):
     return Property.objects.filter(tenant=tenant, id__in=allowed).order_by("name")
 
 
+def _context_display_flags(tenant_options, property_options):
+    show_tenant_selector = len(tenant_options) > 1
+    show_property_selector = len(property_options) > 1
+    return {
+        "show_tenant_selector": show_tenant_selector,
+        "show_property_selector": show_property_selector,
+        "show_context_apply": show_tenant_selector or show_property_selector,
+    }
+
+
 def _can_nav_module(user, tenant, property_obj, module_key, action=None, roles=None):
     if tenant is None:
         return False
@@ -478,6 +488,7 @@ def _build_context(request, require_property=False):
             "selected_property": None,
             "support_session": support_session,
             "support_sessions": [],
+            **_context_display_flags(tenant_options, property_options),
             "context_error": "No hay sede disponible para este usuario en el tenant seleccionado.",
             "nav_items": _build_nav_items(request.user, selected_tenant, None, request.path),
         }
@@ -495,6 +506,7 @@ def _build_context(request, require_property=False):
                 "selected_property": selected_property,
                 "support_session": support_session,
                 "support_sessions": [],
+                **_context_display_flags(tenant_options, property_options),
                 "context_error": "No tienes permisos para operar en este tenant.",
                 "nav_items": _build_nav_items(request.user, selected_tenant, selected_property, request.path),
             }
@@ -513,6 +525,7 @@ def _build_context(request, require_property=False):
                 "selected_property": selected_property,
                 "support_session": support_session,
                 "support_sessions": [],
+                **_context_display_flags(tenant_options, property_options),
                 "context_error": "No tienes permisos de acceso en esta sede.",
                 "nav_items": _build_nav_items(request.user, selected_tenant, selected_property, request.path),
             }
@@ -532,6 +545,7 @@ def _build_context(request, require_property=False):
         "selected_property": selected_property,
         "support_session": support_session,
         "support_sessions": support_sessions,
+        **_context_display_flags(tenant_options, property_options),
         "context_error": "",
         "nav_items": _build_nav_items(request.user, selected_tenant, selected_property, request.path),
     }

@@ -45,6 +45,134 @@ class WebUiAuthTests(TestCase):
         self.assertTrue(response.url.startswith("/app/login/?next=/app/scheduling/"))
 
 
+class WebUiGlobalContextSelectorTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(name="Tenant autorizado", slug="tenant-autorizado")
+        self.other_tenant = Tenant.objects.create(name="Tenant no autorizado", slug="tenant-no-autorizado")
+        self.property = Property.objects.create(tenant=self.tenant, name="Sede autorizada", slug="sede-autorizada")
+        self.other_property = Property.objects.create(tenant=self.tenant, name="Sede no autorizada", slug="sede-no-autorizada")
+        self.normal_user = User.objects.create_user(email="selector-normal@pariwana.test", password="StrongPass123")
+        self.property_admin = User.objects.create_user(email="selector-admin@pariwana.test", password="StrongPass123")
+        self.super_admin = User.objects.create_user(
+            email="selector-super@pariwana.test", password="StrongPass123", is_super_admin=True
+        )
+        for user, role in ((self.normal_user, RoleChoices.OPERATOR), (self.property_admin, RoleChoices.ADMIN)):
+            UserTenantRole.objects.create(user=user, tenant=self.tenant, role=role)
+            UserPropertyPermission.objects.create(
+                user=user,
+                tenant=self.tenant,
+                property=self.property,
+                can_access=True,
+            )
+
+    def _activate_context(self, user, tenant=None, property_obj=None, support_session=None):
+        self.client.force_login(user)
+        session = self.client.session
+        session["ui_tenant_id"] = (tenant or self.tenant).id
+        session["ui_property_id"] = (property_obj or self.property).id
+        if support_session:
+            session["support_session_id"] = support_session.id
+        session.save()
+
+    def test_normal_user_sees_only_authorized_static_context_without_support(self):
+        self._activate_context(self.normal_user)
+
+        response = self.client.get(reverse("webui-dashboard"))
+
+        self.assertContains(response, "Tenant autorizado")
+        self.assertContains(response, "Sede autorizada")
+        self.assertContains(response, 'name="tenant_id" value="%s"' % self.tenant.id, html=False)
+        self.assertContains(response, 'name="property_id" value="%s"' % self.property.id, html=False)
+        self.assertNotContains(response, "Sesion Soporte")
+        self.assertNotContains(response, "Sin soporte")
+        self.assertNotContains(response, "Tenant no autorizado")
+        self.assertNotContains(response, "Sede no autorizada")
+        self.assertNotContains(response, ">Aplicar<", html=False)
+
+    def test_property_admin_does_not_see_support_controls(self):
+        self._activate_context(self.property_admin)
+
+        response = self.client.get(reverse("webui-dashboard"))
+
+        self.assertNotContains(response, "Sesion Soporte")
+        self.assertNotContains(response, "Sin soporte")
+        self.assertNotContains(response, "/app/support/")
+
+    def test_user_with_multiple_authorized_properties_sees_only_allowed_options_and_apply(self):
+        second_property = Property.objects.create(tenant=self.tenant, name="Segunda sede autorizada", slug="segunda-sede")
+        UserPropertyPermission.objects.create(
+            user=self.normal_user,
+            tenant=self.tenant,
+            property=second_property,
+            can_access=True,
+        )
+        self._activate_context(self.normal_user)
+
+        response = self.client.get(reverse("webui-dashboard"))
+
+        self.assertContains(response, '<select name="property_id">', html=False)
+        self.assertContains(response, "Sede autorizada")
+        self.assertContains(response, "Segunda sede autorizada")
+        self.assertNotContains(response, "Sede no autorizada")
+        self.assertContains(response, ">Aplicar<", html=False)
+        self.assertContains(response, 'name="tenant_id" value="%s"' % self.tenant.id, html=False)
+
+    def test_user_with_multiple_authorized_tenants_sees_tenant_selector(self):
+        second_tenant = Tenant.objects.create(name="Segundo tenant autorizado", slug="segundo-tenant")
+        second_property = Property.objects.create(tenant=second_tenant, name="Sede segundo tenant", slug="sede-segundo-tenant")
+        UserTenantRole.objects.create(user=self.normal_user, tenant=second_tenant, role=RoleChoices.OPERATOR)
+        UserPropertyPermission.objects.create(
+            user=self.normal_user,
+            tenant=second_tenant,
+            property=second_property,
+            can_access=True,
+        )
+        self._activate_context(self.normal_user)
+
+        response = self.client.get(reverse("webui-dashboard"))
+
+        self.assertContains(response, '<select name="tenant_id">', html=False)
+        self.assertContains(response, "Segundo tenant autorizado")
+        self.assertNotContains(response, "Tenant no autorizado")
+        self.assertContains(response, ">Aplicar<", html=False)
+        self.assertContains(response, 'name="property_id" value="%s"' % self.property.id, html=False)
+
+    def test_super_admin_without_active_support_sees_support_link_only(self):
+        self._activate_context(self.super_admin)
+
+        response = self.client.get(reverse("webui-dashboard"))
+
+        self.assertContains(response, 'href="/app/support/">Soporte</a>', html=False)
+        self.assertNotContains(response, "Sesion Soporte")
+        self.assertNotContains(response, "Sin soporte")
+
+    def test_super_admin_with_active_support_sees_status_and_management_link(self):
+        support_session = TenantSupportAccessSession.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            started_by=self.super_admin,
+            reason="Prueba de selector",
+        )
+        self._activate_context(self.super_admin, support_session=support_session)
+
+        response = self.client.get(reverse("webui-dashboard"))
+
+        self.assertContains(response, "Soporte activo:")
+        self.assertContains(response, "Tenant autorizado · Sede autorizada")
+        self.assertContains(response, 'href="/app/support/">Gestionar o cerrar</a>', html=False)
+        self.assertNotContains(response, "Sesion Soporte")
+        self.assertNotContains(response, "Sin soporte")
+
+    def test_scheduling_uses_the_same_single_context_component(self):
+        self._activate_context(self.normal_user)
+
+        response = self.client.get(reverse("webui-scheduling"))
+
+        self.assertNotContains(response, "Opciones avanzadas")
+        self.assertNotContains(response, "mobile-property-switch")
+        self.assertNotContains(response, ">Aplicar<", html=False)
+
+
 class WebUiDashboardTests(TestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(name="Pariwana Hostels", slug="pariwana-hostels")
