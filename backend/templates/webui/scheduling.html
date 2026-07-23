@@ -15,17 +15,47 @@
     .scheduling-page .section-title { color: var(--schedule-ink); }
     .scheduling-page .panel { border-color: var(--schedule-line); box-shadow: none; }
     .scheduling-filters-form {
-      display: flex;
+      display: grid;
+      grid-template-columns: max-content max-content max-content minmax(260px, 1fr);
       gap: 8px;
       align-items: end;
-      flex-wrap: wrap;
     }
+    .scheduling-filter-field { min-width: 0; }
+    .scheduling-filter-month input { width: 146px; min-width: 146px; }
     .scheduling-filters-actions {
       display: flex;
       gap: 6px;
       align-items: center;
-      flex-wrap: wrap;
+      min-height: 36px;
     }
+    .scheduling-filters-actions a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 36px;
+      padding: 7px 9px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      color: #111827;
+      font-size: 13px;
+      line-height: 1;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .scheduling-filter-search input { width: 100%; min-width: 260px; }
+    .scheduling-filter-area-context {
+      display: flex;
+      align-items: center;
+      min-height: 36px;
+      padding: 0 10px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      background: #f8fafc;
+      color: #1f2937;
+    }
+    .scheduling-filters-form input,
+    .scheduling-filters-form select { height: 36px; }
+    .scheduling-filter-clear { align-self: end; }
+    .scheduling-filter-clear a { border: 0; padding: 0; min-height: 0; color: #0f766e; }
     .scheduling-meta {
       display: flex;
       gap: 8px;
@@ -423,6 +453,7 @@
         grid-template-columns: minmax(0, 1fr);
         align-items: center;
       }
+      .scheduling-filter-search { grid-column: 1 / -1; }
       .scheduling-filters-actions:last-child button {
         width: 100%;
       }
@@ -603,31 +634,39 @@
   </div>
   <section class="panel scheduling-toolbar" style="margin-bottom: 12px;">
     <form method="get" action="/app/scheduling/" class="scheduling-filters-form">
-      <div>
+      <div class="scheduling-filter-field scheduling-filter-month">
         <label>Mes</label>
         <input type="month" name="month" value="{{ month_value }}" onchange="this.form.submit()">
       </div>
       <div class="scheduling-filters-actions">
-        <a href="/app/scheduling/?month={{ month_prev_value }}{% if selected_area_id %}&area_id={{ selected_area_id }}{% endif %}{% if worker_query %}&worker_q={{ worker_query|urlencode }}{% endif %}{% if focus_date_value %}&focus_date={{ focus_date_value|urlencode }}{% endif %}" style="padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; text-decoration:none; color:#111827;">Mes anterior</a>
-        <a href="/app/scheduling/?month={{ month_next_value }}{% if selected_area_id %}&area_id={{ selected_area_id }}{% endif %}{% if worker_query %}&worker_q={{ worker_query|urlencode }}{% endif %}{% if focus_date_value %}&focus_date={{ focus_date_value|urlencode }}{% endif %}" style="padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; text-decoration:none; color:#111827;">Mes siguiente</a>
+        <a href="/app/scheduling/?month={{ month_prev_value }}{% if selected_area_id %}&area_id={{ selected_area_id }}{% endif %}{% if worker_query %}&worker_q={{ worker_query|urlencode }}{% endif %}{% if focus_date_value %}&focus_date={{ focus_date_value|urlencode }}{% endif %}">‹ Anterior</a>
+        <a href="/app/scheduling/?month={{ month_next_value }}{% if selected_area_id %}&area_id={{ selected_area_id }}{% endif %}{% if worker_query %}&worker_q={{ worker_query|urlencode }}{% endif %}{% if focus_date_value %}&focus_date={{ focus_date_value|urlencode }}{% endif %}">Siguiente ›</a>
       </div>
-      <div>
-        <label>Area</label>
+      <div class="scheduling-filter-field">
+        <label>Área</label>
+        {% if show_area_selector %}
         <select name="area_id" onchange="this.form.submit()">
-          <option value="">Todas</option>
+          <option value="">{{ area_filter_label }}</option>
           {% for area in areas %}
             <option value="{{ area.id }}" {% if selected_area_id == area.id %}selected{% endif %}>{{ area.name }}</option>
           {% endfor %}
         </select>
+        {% else %}
+          {% for area in areas %}
+            <div class="scheduling-filter-area-context">{{ area.name }}</div>
+          {% empty %}
+            <div class="scheduling-filter-area-context">Sin áreas autorizadas</div>
+          {% endfor %}
+        {% endif %}
       </div>
-      <div class="scheduling-filter-secondary">
-        <label>Trabajador (nombre o DNI)</label>
-        <input type="text" name="worker_q" value="{{ worker_query|default:'' }}" placeholder="Buscar trabajador">
+      <div class="scheduling-filter-field scheduling-filter-search">
+        <label>Buscar por nombre o DNI</label>
+        <input type="text" name="worker_q" value="{{ worker_query|default:'' }}" placeholder="Buscar por nombre o DNI">
       </div>
       {% if focus_date_value %}
         <input type="hidden" name="focus_date" value="{{ focus_date_value }}">
       {% endif %}
-      <div class="scheduling-filters-actions scheduling-filter-secondary">
+      <div class="scheduling-filters-actions scheduling-filter-clear">
         {% if worker_query %}
           <a href="/app/scheduling/?month={{ month_value }}{% if selected_area_id %}&area_id={{ selected_area_id }}{% endif %}" style="font-size:13px;">Limpiar filtro</a>
         {% endif %}

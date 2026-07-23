@@ -1512,8 +1512,8 @@ class WebUiSchedulingTests(TestCase):
 
         response = self.client.get(reverse("webui-scheduling"))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Mes anterior")
-        self.assertContains(response, "Mes siguiente")
+        self.assertContains(response, "‹ Anterior")
+        self.assertContains(response, "Siguiente ›")
         self.assertContains(response, "asignados")
         self.assertContains(response, "pendientes")
         self.assertContains(response, "Reporte del equipo")
@@ -1593,6 +1593,144 @@ class WebUiSchedulingTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "44556677")
         self.assertNotContains(response, "11112222")
+
+    def test_scheduling_page_shows_single_authorized_area_without_selector(self):
+        Area.objects.create(tenant=self.tenant, property=self.property, name="Housekeeping")
+        supervisor = User.objects.create_user(email="one-area-supervisor@pariwana.test", password="StrongPass123")
+        UserTenantRole.objects.create(user=supervisor, tenant=self.tenant, role=RoleChoices.SUPERVISOR)
+        UserPropertyPermission.objects.create(
+            user=supervisor,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+            can_schedule=True,
+        )
+        UserAreaPermission.objects.create(
+            user=supervisor,
+            tenant=self.tenant,
+            property=self.property,
+            area=self.area,
+            can_view=True,
+            can_schedule=True,
+        )
+
+        self.client.force_login(supervisor)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+
+        response = self.client.get(reverse("webui-scheduling"), {"month": "2026-06"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'class="scheduling-filter-area-context">Recepcion', html=False)
+        self.assertNotContains(response, "Housekeeping")
+        self.assertNotContains(response, '<select name="area_id" onchange="this.form.submit()">', html=True)
+
+    def test_scheduling_page_limits_multi_area_selector_to_authorized_areas(self):
+        allowed_area = Area.objects.create(tenant=self.tenant, property=self.property, name="Bar")
+        Area.objects.create(tenant=self.tenant, property=self.property, name="Housekeeping")
+        supervisor = User.objects.create_user(email="multi-area-supervisor@pariwana.test", password="StrongPass123")
+        UserTenantRole.objects.create(user=supervisor, tenant=self.tenant, role=RoleChoices.SUPERVISOR)
+        UserPropertyPermission.objects.create(
+            user=supervisor,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+            can_schedule=True,
+        )
+        for area in [self.area, allowed_area]:
+            UserAreaPermission.objects.create(
+                user=supervisor,
+                tenant=self.tenant,
+                property=self.property,
+                area=area,
+                can_view=True,
+                can_schedule=True,
+            )
+
+        self.client.force_login(supervisor)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+
+        response = self.client.get(reverse("webui-scheduling"), {"month": "2026-06"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Todas mis áreas")
+        self.assertContains(response, "Recepcion")
+        self.assertContains(response, "Bar")
+        self.assertNotContains(response, "Housekeeping")
+
+    def test_scheduling_page_ignores_unauthorized_area_id(self):
+        other_area = Area.objects.create(tenant=self.tenant, property=self.property, name="Housekeeping")
+        Worker.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            area=other_area,
+            document_number="11112222",
+            first_name="Carlos",
+            last_name="Rojas",
+            active=True,
+        )
+        supervisor = User.objects.create_user(email="blocked-area-supervisor@pariwana.test", password="StrongPass123")
+        UserTenantRole.objects.create(user=supervisor, tenant=self.tenant, role=RoleChoices.SUPERVISOR)
+        UserPropertyPermission.objects.create(
+            user=supervisor,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+            can_schedule=True,
+        )
+        UserAreaPermission.objects.create(
+            user=supervisor,
+            tenant=self.tenant,
+            property=self.property,
+            area=self.area,
+            can_view=True,
+            can_schedule=True,
+        )
+
+        self.client.force_login(supervisor)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+
+        response = self.client.get(
+            reverse("webui-scheduling"),
+            {"month": "2026-06", "area_id": str(other_area.id)},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "44556677")
+        self.assertNotContains(response, "11112222")
+        self.assertNotContains(response, "Housekeeping")
+
+    def test_scheduling_page_super_admin_sees_all_property_areas(self):
+        other_area = Area.objects.create(tenant=self.tenant, property=self.property, name="Housekeeping")
+        super_admin = User.objects.create_user(
+            email="all-areas-super@pariwana.test",
+            password="StrongPass123",
+            is_super_admin=True,
+        )
+        self.client.force_login(super_admin)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+
+        response = self.client.get(
+            reverse("webui-scheduling"),
+            {"month": "2026-06", "area_id": str(other_area.id)},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Todas")
+        self.assertContains(response, "Recepcion")
+        self.assertContains(response, "Housekeeping")
+        self.assertContains(response, f'value="{other_area.id}" selected', html=False)
 
     def test_operator_with_restricted_area_cannot_assign_worker_outside_area(self):
         area_2 = Area.objects.create(tenant=self.tenant, property=self.property, name="Bar")

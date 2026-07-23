@@ -23,7 +23,7 @@
     }
     * { box-sizing: border-box; }
     body { margin: 0; font-family: Arial, sans-serif; color: var(--ink); background: var(--bg); }
-    .layout { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+    .layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: 100vh; }
     .sidebar { background: #0b1220; color: #e5e7eb; padding: 18px 14px; }
     .sidebar-header { display: block; }
     .brand { font-size: 16px; font-weight: 700; margin-bottom: 18px; }
@@ -44,7 +44,7 @@
     .topbar { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
     .topbar form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 0; }
     .topbar-context-form { flex: 1 1 auto; min-width: min(100%, 520px); }
-    .topbar-user-actions { display: flex; gap: 10px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+    .topbar-user-actions { display: flex; gap: 10px; align-items: center; justify-content: flex-end; flex-wrap: wrap; margin-left: auto; flex: 0 1 auto; }
     .topbar-logout-form { flex: 0 0 auto; }
     .topbar-user { display: grid; gap: 2px; justify-items: end; line-height: 1.2; }
     .topbar-user-label { font-size: 11px; color: var(--muted); }
