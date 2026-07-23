@@ -261,6 +261,53 @@
         <form method="post" action="/app/context/" class="topbar-context-form">
           {% csrf_token %}
           <input type="hidden" name="next" value="{{ request.path }}">
+          {% if is_scheduling_page and not user.is_super_admin %}
+            <div>
+              <label>Sede</label>
+              {% if has_single_property %}
+                <strong>{{ selected_property.name }}</strong>
+                <input type="hidden" name="property_id" value="{{ selected_property.id }}">
+              {% else %}
+                <select name="property_id" onchange="this.form.submit()">
+                  {% for property in property_options %}
+                    <option value="{{ property.id }}" {% if selected_property and selected_property.id == property.id %}selected{% endif %}>{{ property.name }}</option>
+                  {% endfor %}
+                </select>
+              {% endif %}
+            </div>
+          {% elif is_scheduling_page and user.is_super_admin %}
+            <details class="scheduling-advanced-options">
+              <summary>Opciones avanzadas</summary>
+              <div class="scheduling-advanced-fields">
+                <div>
+                  <label>Tenant</label>
+                  <select name="tenant_id">
+                    {% for tenant in tenant_options %}
+                      <option value="{{ tenant.id }}" {% if selected_tenant and selected_tenant.id == tenant.id %}selected{% endif %}>{{ tenant.name }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div>
+                  <label>Sede</label>
+                  <select name="property_id">
+                    {% for property in property_options %}
+                      <option value="{{ property.id }}" {% if selected_property and selected_property.id == property.id %}selected{% endif %}>{{ property.name }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div>
+                  <label>Sesion Soporte</label>
+                  <select name="support_session_id">
+                    <option value="">Sin soporte</option>
+                    {% for session in support_sessions %}
+                      <option value="{{ session.id }}" {% if support_session and support_session.id == session.id %}selected{% endif %}>#{{ session.id }} - {{ session.tenant.name }}{% if session.property %} / {{ session.property.name }}{% endif %}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <button class="primary" type="submit">Aplicar</button>
+              </div>
+            </details>
+          {% else %}
           <div>
             <label>Tenant</label>
             <select name="tenant_id">
@@ -293,6 +340,7 @@
           <div style="align-self: end;">
             <button class="primary" type="submit">Aplicar</button>
           </div>
+          {% endif %}
         </form>
         <div class="topbar-user-actions">
           <div class="topbar-user" title="{{ user.email }}">

@@ -1514,10 +1514,33 @@ class WebUiSchedulingTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Mes anterior")
         self.assertContains(response, "Mes siguiente")
-        self.assertContains(response, "Programadas:")
-        self.assertContains(response, "Pendientes:")
+        self.assertContains(response, "asignados")
+        self.assertContains(response, "pendientes")
+        self.assertContains(response, "Reporte del equipo")
+        self.assertContains(response, "Sin asignar")
+        self.assertContains(response, 'class="panel scheduling-bulk-actions" style="margin-bottom: 12px;" hidden')
+        self.assertNotContains(response, '<label>Tenant</label>', html=True)
         self.assertContains(response, 'aria-label="Vista movil de asignacion"')
         self.assertContains(response, "Lun")
+
+    def test_scheduling_page_keeps_super_admin_context_in_advanced_options(self):
+        super_admin = User.objects.create_user(
+            email="scheduling-super@pariwana.test",
+            password="StrongPass123",
+            is_super_admin=True,
+        )
+        self.client.force_login(super_admin)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+
+        response = self.client.get(reverse("webui-scheduling"), {"month": "2026-06"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Opciones avanzadas")
+        self.assertContains(response, '<label>Tenant</label>', html=True)
+        self.assertContains(response, "Acciones masivas y plantillas")
 
     def test_scheduling_page_handles_template_table_missing_gracefully(self):
         self.client.force_login(self.user)

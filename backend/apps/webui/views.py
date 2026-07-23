@@ -1777,15 +1777,20 @@ def scheduling_page(request):
             selected_shift_id = None
             selected_state_id = None
             selected_value = ""
+            display_label = "Sin asignar"
             if assignment:
                 if assignment.shift_id:
                     selected_value = f"shift:{assignment.shift_id}"
                     code = assignment.shift.buk_code
+                    display_label = (
+                        f"{assignment.shift.start_time:%H:%M}\u2013{assignment.shift.end_time:%H:%M}"
+                    )
                     is_night = bool(assignment.shift.is_night_shift)
                     selected_shift_id = assignment.shift_id
                 elif assignment.special_state_id:
                     selected_value = f"state:{assignment.special_state_id}"
                     code = assignment.special_state.buk_code or assignment.special_state.name
+                    display_label = assignment.special_state.name
                     selected_state_id = assignment.special_state_id
             is_editable = can_schedule and area_allowed
             if code:
@@ -1806,6 +1811,7 @@ def scheduling_page(request):
                     "selected_shift_id": selected_shift_id,
                     "selected_state_id": selected_state_id,
                     "display_code": code,
+                    "display_label": display_label,
                     "is_night": is_night,
                     "is_focus": bool(focus_date and day_meta["date"] == focus_date),
                     "is_recent_edit": bool(
@@ -2087,6 +2093,8 @@ def scheduling_page(request):
             "range_template_preview": range_template_preview,
             "pending_previews": pending_previews,
             "templates_load_error": templates_load_error,
+            "is_scheduling_page": True,
+            "has_single_property": len(ctx["property_options"]) == 1,
         },
     )
 

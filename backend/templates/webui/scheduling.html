@@ -2,11 +2,23 @@
 {% block title %}Asignacion mensual - Pariwana Scheduler{% endblock %}
 {% block content %}
   <style>
+    .scheduling-page {
+      --schedule-ink: #1f2937;
+      --schedule-muted: #667085;
+      --schedule-line: #dfe5e7;
+      --schedule-teal: #0f766e;
+      --schedule-bg: #f5f7f7;
+    }
+    .scheduling-advanced-options summary { cursor: pointer; font-size: 13px; font-weight: 700; color: #0f766e; }
+    .scheduling-advanced-fields { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; margin-top: 8px; }
+    .scheduling-page .page-header { margin-bottom: 14px; }
+    .scheduling-page .section-title { color: var(--schedule-ink); }
+    .scheduling-page .panel { border-color: var(--schedule-line); box-shadow: none; }
     .scheduling-filters-form {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      display: flex;
       gap: 8px;
       align-items: end;
+      flex-wrap: wrap;
     }
     .scheduling-filters-actions {
       display: flex;
@@ -44,7 +56,7 @@
       overflow: auto;
       max-height: 72vh;
       border: 1px solid #e5e7eb;
-      border-radius: 8px;
+      border-radius: 10px;
       background: #ffffff;
     }
     .scheduling-table {
@@ -54,7 +66,8 @@
     }
     .scheduling-table td {
       vertical-align: top;
-      min-width: 116px;
+      min-width: 132px;
+      padding: 7px;
     }
     .scheduling-table tbody tr:nth-child(even) td:not(.scheduling-worker-cell) {
       background: #fcfcfd;
@@ -66,7 +79,8 @@
       background: #ffffff;
       white-space: nowrap;
       text-align: center;
-      min-width: 116px;
+      min-width: 132px;
+      padding: 9px 7px;
     }
     .day-header-label {
       display: grid;
@@ -102,7 +116,7 @@
       left: 0;
       z-index: 2;
       background: #ffffff;
-      min-width: 240px;
+      min-width: 250px;
       max-width: 280px;
       border-right: 1px solid #e5e7eb;
     }
@@ -117,27 +131,36 @@
       color: #6b7280;
     }
     .scheduling-edit-form {
-      display: grid;
-      gap: 4px;
-      min-width: 108px;
+      display: flex;
+      gap: 5px;
+      min-width: 118px;
+      align-items: center;
+      border-radius: 7px;
+      padding: 3px;
+      background: var(--assignment-bg, #ffffff);
+      border: 1px solid var(--assignment-border, #dfe5e7);
     }
     .scheduling-edit-form select {
-      min-width: 102px;
-      max-width: 118px;
+      min-width: 92px;
+      max-width: 105px;
       width: 100%;
-    }
-    .assignment-code {
-      display: inline-flex;
-      align-items: center;
-      min-height: 20px;
-      width: fit-content;
-      max-width: 100%;
-      padding: 2px 6px;
-      border-radius: 4px;
-      background: #f3f4f6;
-      color: #374151;
+      padding: 6px;
+      border-color: transparent;
+      background: transparent;
+      color: #263238;
       font-size: 12px;
       font-weight: 700;
+    }
+    .assignment-code {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
     }
     .assignment-code.is-empty {
       color: #9ca3af;
@@ -156,9 +179,7 @@
       background: #fef2f2;
     }
     .assignment-status {
-      min-height: 16px;
-      font-size: 11px;
-      color: #6b7280;
+      display: none;
     }
     .assignment-status.is-error {
       color: #b91c1c;
@@ -175,14 +196,30 @@
       border: 1px solid #d1d5db;
       background: #ffffff;
       color: #374151;
-      border-radius: 4px;
-      padding: 2px 6px;
+      border-radius: 5px;
+      padding: 4px 6px;
       font-size: 11px;
       line-height: 1.25;
+      white-space: nowrap;
     }
     .copy-assignment-button[hidden] {
       display: none;
     }
+    .scheduling-edit-form.is-unassigned { --assignment-bg: #ffffff; --assignment-border: #e9b7b7; }
+    .scheduling-edit-form.is-special { --assignment-bg: #fce7f3; --assignment-border: #f3b7d5; }
+    .scheduling-edit-form.is-free { --assignment-bg: #f1f3f5; --assignment-border: #d8dee4; }
+    .scheduling-edit-form.is-saving { --assignment-bg: #fffbeb; --assignment-border: #f5c96c; }
+    .scheduling-edit-form.is-saved { --assignment-bg: #e7f7f3; --assignment-border: #87d5c3; }
+    .scheduling-edit-form.is-error { --assignment-bg: #fff1f2; --assignment-border: #f0a8b1; }
+    .scheduling-summary { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0 0 12px; color: var(--schedule-muted); font-size: 13px; }
+    .scheduling-summary strong { color: var(--schedule-ink); }
+    .scheduling-summary .is-assigned { color: #18794e; }
+    .scheduling-summary .is-pending { color: #b42318; }
+    .scheduling-toast { position: fixed; right: 20px; bottom: 20px; z-index: 30; max-width: min(340px, calc(100vw - 32px)); padding: 10px 13px; border: 1px solid #8ad2c1; border-radius: 8px; background: #ecfdf5; color: #075c47; box-shadow: 0 10px 24px rgba(15, 23, 42, 0.14); font-size: 13px; font-weight: 700; opacity: 0; pointer-events: none; transform: translateY(8px); transition: opacity .18s ease, transform .18s ease; }
+    .scheduling-toast.is-visible { opacity: 1; transform: translateY(0); }
+    .scheduling-toast.is-error { border-color: #f3b5ba; background: #fff1f2; color: #b42318; }
+    .scheduling-team-report { padding: 8px 12px !important; }
+    .scheduling-team-report summary { color: var(--schedule-teal); font-size: 13px; }
     .scheduling-mobile-list {
       display: none;
     }
@@ -557,17 +594,18 @@
       }
     }
   </style>
+  <div class="scheduling-page">
   <div class="page-header">
     <div>
       <h1 class="section-title">Asignacion <span class="info-dot" title="Aqui asignas turnos o estados especiales por trabajador y fecha. Filtra por mes, area o trabajador para trabajar mas rapido.">i</span></h1>
-      <p class="compact-note">La grilla mensual es el punto principal para cargar horarios.</p>
+      <p class="compact-note">Asigna los horarios del mes para tu equipo.</p>
     </div>
   </div>
   <section class="panel scheduling-toolbar" style="margin-bottom: 12px;">
     <form method="get" action="/app/scheduling/" class="scheduling-filters-form">
       <div>
         <label>Mes</label>
-        <input type="month" name="month" value="{{ month_value }}">
+        <input type="month" name="month" value="{{ month_value }}" onchange="this.form.submit()">
       </div>
       <div class="scheduling-filters-actions">
         <a href="/app/scheduling/?month={{ month_prev_value }}{% if selected_area_id %}&area_id={{ selected_area_id }}{% endif %}{% if worker_query %}&worker_q={{ worker_query|urlencode }}{% endif %}{% if focus_date_value %}&focus_date={{ focus_date_value|urlencode }}{% endif %}" style="padding:8px 10px; border:1px solid #d1d5db; border-radius:6px; text-decoration:none; color:#111827;">Mes anterior</a>
@@ -575,22 +613,21 @@
       </div>
       <div>
         <label>Area</label>
-        <select name="area_id">
+        <select name="area_id" onchange="this.form.submit()">
           <option value="">Todas</option>
           {% for area in areas %}
             <option value="{{ area.id }}" {% if selected_area_id == area.id %}selected{% endif %}>{{ area.name }}</option>
           {% endfor %}
         </select>
       </div>
-      <div>
+      <div class="scheduling-filter-secondary">
         <label>Trabajador (nombre o DNI)</label>
         <input type="text" name="worker_q" value="{{ worker_query|default:'' }}" placeholder="Buscar trabajador">
       </div>
       {% if focus_date_value %}
         <input type="hidden" name="focus_date" value="{{ focus_date_value }}">
       {% endif %}
-      <div class="scheduling-filters-actions">
-        <button class="primary" type="submit">Actualizar</button>
+      <div class="scheduling-filters-actions scheduling-filter-secondary">
         {% if worker_query %}
           <a href="/app/scheduling/?month={{ month_value }}{% if selected_area_id %}&area_id={{ selected_area_id }}{% endif %}" style="font-size:13px;">Limpiar filtro</a>
         {% endif %}
@@ -599,13 +636,13 @@
     {% if is_month_closed %}
       <p class="error" style="margin-top: 10px;">Mes cerrado: la grilla se muestra en solo lectura.</p>
     {% endif %}
-    <p class="scheduling-hint">Tip: usa filtros y desplaza la grilla horizontalmente para editar dias del mes. Selecciona <strong>--</strong> para limpiar una asignacion.</p>
+    <p class="scheduling-hint">Desplaza la grilla horizontalmente. Elige “Sin asignar” para limpiar una celda.</p>
     <p class="scheduling-scroll-note">En telefono se muestra una vista por trabajador. En desktop se mantiene la grilla mensual.</p>
   </section>
 
   <section class="panel scheduling-team-report" style="margin-bottom: 12px;">
     <details>
-      <summary>Reporte PDF para equipo</summary>
+      <summary>Reporte del equipo</summary>
       <form method="get" action="/app/scheduling/team-report.pdf" class="filters-bar" style="margin-top:10px;">
         <div>
           <label>Desde</label>
@@ -673,7 +710,7 @@
   {% endif %}
 
   {% if can_schedule and not is_month_closed %}
-    <details class="panel scheduling-bulk-actions" style="margin-bottom: 12px;">
+    <details class="panel scheduling-bulk-actions" style="margin-bottom: 12px;" {% if not user.is_super_admin %}hidden{% endif %}>
       <summary>Acciones masivas y plantillas</summary>
       {% if templates_load_error %}
         <p class="error" style="margin-top:0;">{{ templates_load_error }}</p>
@@ -1428,13 +1465,8 @@
     </details>
   {% endif %}
 
-  <div class="scheduling-meta">
-    <span class="scheduling-pill">Trabajadores visibles: {{ rows|length }}</span>
-    <span class="scheduling-pill">Dias del mes: {{ days|length }}</span>
-    <span class="scheduling-pill">Mes: {{ month_value }}</span>
-    <span class="scheduling-pill">Programadas: {{ scheduled_cells_count }}</span>
-    <span class="scheduling-pill">Pendientes: {{ missing_cells_count }}</span>
-    <span class="scheduling-pill">Nocturnas: {{ night_cells_count }}</span>
+  <div class="scheduling-summary" aria-label="Resumen de asignaciones">
+    <strong>{{ rows|length }} trabajadores</strong><span>·</span><span>{{ days|length }} dias</span><span>·</span><span class="is-assigned">{{ scheduled_cells_count }} asignados</span><span>·</span><span class="is-pending">{{ missing_cells_count }} pendientes</span>
   </div>
 
   <section class="panel">
@@ -1461,7 +1493,7 @@
               <span class="worker-subtitle">{{ row.worker.document_number }} - {{ row.worker.area.name }}</span>
             </td>
             {% for cell in row.cells %}
-              <td data-day-date="{{ cell.date|date:'Y-m-d' }}" class="{% if cell.is_focus %}focus-day-cell{% endif %} {% if cell.is_recent_edit %}recent-edit-cell{% endif %}" {% if cell.is_night %}style="background:#eef2ff;"{% endif %}>
+              <td data-day-date="{{ cell.date|date:'Y-m-d' }}" class="{% if cell.is_focus %}focus-day-cell{% endif %} {% if cell.is_recent_edit %}recent-edit-cell{% endif %}">
                 {% if cell.editable %}
                   <form method="post" action="/app/scheduling/assign/" class="scheduling-edit-form" data-ajax-assign>
                     {% csrf_token %}
@@ -1472,19 +1504,19 @@
                     <input type="hidden" name="worker_id" value="{{ row.worker.id }}">
                     <input type="hidden" name="work_date" value="{{ cell.date|date:'Y-m-d' }}">
                     <select name="assignment_value" data-last-value="{{ cell.selected_value|default:'' }}">
-                      <option value="">--</option>
+                      <option value="">Sin asignar</option>
                       {% for shift in cell.shift_options %}
                         <option value="shift:{{ shift.id }}" {% if cell.selected_shift_id == shift.id %}selected{% endif %}>
-                          {{ shift.start_time|time:"H:i" }}-{{ shift.end_time|time:"H:i" }} ({{ shift.name }})
+                          {{ shift.start_time|time:"H:i" }}–{{ shift.end_time|time:"H:i" }}
                         </option>
                       {% endfor %}
                       {% for state in cell.state_options %}
                         <option value="state:{{ state.id }}" {% if cell.selected_state_id == state.id %}selected{% endif %}>
-                          {{ state.buk_code|default:state.name }} ({{ state.name }})
+                          {{ state.name }}
                         </option>
                       {% endfor %}
                     </select>
-                    <span class="assignment-code {% if not cell.display_code %}is-empty{% endif %}">{{ cell.display_code|default:'-' }}</span>
+                    <span class="assignment-code {% if not cell.display_code %}is-empty{% endif %}">{{ cell.display_label }}</span>
                     <span class="assignment-cell-actions">
                       <button
                         type="button"
@@ -1501,7 +1533,7 @@
                     <span class="assignment-status" aria-live="polite"></span>
                   </form>
                 {% else %}
-                  <span class="assignment-code {% if not cell.display_code %}is-empty{% endif %}">{{ cell.display_code|default:'-' }}</span>
+                  <span class="assignment-code {% if not cell.display_code %}is-empty{% endif %}">{{ cell.display_label }}</span>
                 {% endif %}
               </td>
             {% endfor %}
@@ -1602,6 +1634,7 @@
       {% endfor %}
     </div>
   </section>
+  <div class="scheduling-toast" role="status" aria-live="polite" data-scheduling-toast></div>
   <dialog id="copy-assignment-modal" class="modal-dialog">
     <div class="modal-header">
       <h3>Copiar turno a varios dias</h3>
@@ -1679,6 +1712,47 @@
         });
       }
 
+      var toast = document.querySelector("[data-scheduling-toast]");
+      var toastTimer = 0;
+      function showToast(message, isError) {
+        if (!toast) return;
+        window.clearTimeout(toastTimer);
+        toast.textContent = message;
+        toast.classList.toggle("is-error", Boolean(isError));
+        toast.classList.add("is-visible");
+        toastTimer = window.setTimeout(function () {
+          toast.classList.remove("is-visible");
+        }, 2600);
+      }
+
+      function colorForAssignment(value, optionText) {
+        if (!value) return { className: "is-unassigned", bg: "#ffffff", border: "#e9b7b7" };
+        if (value.indexOf("state:") === 0) {
+          if (/libre|descanso|off/i.test(optionText || "")) {
+            return { className: "is-free", bg: "#f1f3f5", border: "#d8dee4" };
+          }
+          return { className: "is-special", bg: "#fce7f3", border: "#f3b7d5" };
+        }
+        var palette = [
+          ["#e0f2fe", "#9bd4ed"], ["#dcfce7", "#a7dbb3"], ["#fef3c7", "#ecd17b"],
+          ["#ffedd5", "#efbf88"], ["#ede9fe", "#c8bced"]
+        ];
+        var hash = 0;
+        for (var index = 0; index < value.length; index += 1) hash = ((hash << 5) - hash) + value.charCodeAt(index);
+        var selected = palette[Math.abs(hash) % palette.length];
+        return { className: "is-shift", bg: selected[0], border: selected[1] };
+      }
+
+      function paintAssignment(form, value) {
+        var select = form.querySelector('select[name="assignment_value"]');
+        var option = select && select.options[select.selectedIndex];
+        var color = colorForAssignment(value, option ? option.text : "");
+        form.classList.remove("is-unassigned", "is-special", "is-free", "is-shift");
+        form.classList.add(color.className);
+        form.style.setProperty("--assignment-bg", color.bg);
+        form.style.setProperty("--assignment-border", color.border);
+      }
+
       var focusDate = params.get("focus_date") || "";
       if (focusDate) {
         var wrap = document.getElementById("scheduling-table-wrap");
@@ -1697,6 +1771,7 @@
         var workDateInput = form.querySelector('input[name="work_date"]');
         var requestToken = 0;
         if (!select || !code || !status) return;
+        paintAssignment(form, select.value);
 
         function setState(state, text) {
           form.classList.remove("is-saving", "is-saved", "is-error");
@@ -1753,8 +1828,10 @@
                 }
               }
               select.setAttribute("data-last-value", payload.assignment_value || select.value || "");
+              paintAssignment(form, payload.assignment_value || select.value || "");
               refreshMobileMissingIndicators();
               setState("is-saved", "Guardado");
+              showToast("Horario guardado", false);
               window.setTimeout(function () {
                 if (currentToken === requestToken && form.classList.contains("is-saved")) {
                   setState("", "");
@@ -1764,7 +1841,9 @@
             .catch(function (payload) {
               if (currentToken !== requestToken) return;
               select.value = previousValue;
-              setState("is-error", (payload && payload.message) ? payload.message : "Error al guardar. Intenta otra vez.");
+              paintAssignment(form, previousValue);
+              setState("is-error", (payload && payload.message) ? payload.message : "No se pudo guardar. Intenta nuevamente");
+              showToast("No se pudo guardar. Intenta nuevamente", true);
             })
             .finally(function () {
               if (currentToken === requestToken) {
@@ -1880,4 +1959,5 @@
       updateButtons();
     })();
   </script>
+  </div>
 {% endblock %}
