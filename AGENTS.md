@@ -111,6 +111,15 @@ python -m compileall [ruta_o_app]
 python manage.py makemigrations --check --dry-run
 ```
 
+### Reutilización de validaciones ya realizadas
+
+* No repetir checks o tests que ya pasaron sobre el mismo commit si no hubo cambios posteriores en el código.
+* Asociar la evidencia de validación al hash del commit revisado.
+* Ejecutar una suite completa como máximo una vez por estado relevante del código.
+* Cuando exista CI confiable, utilizarla como validación completa final antes del merge, en lugar de duplicar la misma suite localmente.
+* Después de cambios menores, repetir únicamente los tests directamente afectados.
+* Las operaciones exclusivamente Git, como push o creación de PR, no requieren repetir tests si el commit validado no cambió.
+
 Una tarea está lista cuando los tests relevantes pasan, no hay errores evidentes,
 se respetan permisos e integridad, se revisa el flujo principal y mobile cuando
 corresponde, y se documenta cualquier limitación.
