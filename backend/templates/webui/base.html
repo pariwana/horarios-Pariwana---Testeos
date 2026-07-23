@@ -307,7 +307,7 @@
                 <button class="primary" type="submit">Aplicar</button>
               </div>
             </details>
-          {% else %}
+          {% elif not is_scheduling_share_page %}
           <div>
             <label>Tenant</label>
             <select name="tenant_id">

@@ -74,6 +74,19 @@ WEEK_PATTERN_KEYS = [
 
 AUTO_SHIFT_MERGE_CONFIRM_THRESHOLD = 20
 WEEKDAY_SHORT_LABELS = ["Lun", "Mar", "Mie", "Jue", "Vie", "Sab", "Dom"]
+TEAM_REPORT_SHIFT_COLORS = {
+    "06:00 - 14:45": ("#dbeafe", "#1e3a8a"),
+    "06:00 - 15:00": ("#cffafe", "#155e75"),
+    "14:00 - 22:00": ("#dcfce7", "#14532d"),
+    "22:00 - 06:00": ("#fef3c7", "#78350f"),
+}
+TEAM_REPORT_SHIFT_FALLBACK_COLORS = [
+    ("#e0e7ff", "#3730a3"),
+    ("#fce7f3", "#9d174d"),
+    ("#cffafe", "#155e75"),
+    ("#ffedd5", "#9a3412"),
+    ("#ecfccb", "#3f6212"),
+]
 
 WEBUI_MODULE_CATALOG = [
     ("tenants", "Tenants", "Gestion de tenants para crecimiento multi-empresa."),
@@ -365,7 +378,11 @@ def _can_nav_module(user, tenant, property_obj, module_key, action=None, roles=N
 
 def _build_nav_items(user, tenant, property_obj, current_path="/app/"):
     def nav_item(label, url):
-        is_active = current_path == url or (url != "/app/" and current_path.startswith(url))
+        is_active = current_path == url or (
+            url != "/app/"
+            and current_path.startswith(url)
+            and not (url == "/app/scheduling/" and current_path.startswith("/app/scheduling/share/"))
+        )
         return {"label": label, "url": url, "active": is_active}
 
     items = [nav_item("Dashboard", "/app/")]
@@ -407,6 +424,8 @@ def _build_nav_items(user, tenant, property_obj, current_path="/app/"):
         other_items.append(nav_item("Backup JSON", "/app/backup/"))
     if _can_nav_module(user, tenant, property_obj, "control", "can_use_control"):
         items.append(nav_item("Control 15 dias", "/app/control/"))
+    if _can_nav_module(user, tenant, property_obj, "scheduling", "can_access"):
+        items.append(nav_item("Compartir horarios", "/app/scheduling/share/"))
     if _can_nav_module(user, tenant, property_obj, "month_closure", roles=["admin"]):
         other_items.append(nav_item("Cierre de mes", "/app/month-closure/"))
     if _can_nav_module(user, tenant, property_obj, "audit", roles=["admin"]):
@@ -2149,28 +2168,66 @@ def scheduling_page(request):
     )
 
 
-@login_required
-@require_GET
-def scheduling_team_report_pdf(request):
+def _team_report_cell(label, kind):
+    normalized_label = label.strip()
+    lowered_label = normalized_label.casefold()
+    if kind == "pending":
+        background, text_color = "#ffffff", "#b91c1c"
+    elif kind == "state" and lowered_label in {"libre", "off"}:
+        background, text_color = "#ffffff", "#111827"
+    elif kind == "state":
+        background, text_color = "#ede9fe", "#5b21b6"
+    else:
+        if normalized_label in TEAM_REPORT_SHIFT_COLORS:
+            background, text_color = TEAM_REPORT_SHIFT_COLORS[normalized_label]
+        else:
+            color_index = sum(ord(character) for character in normalized_label) % len(TEAM_REPORT_SHIFT_FALLBACK_COLORS)
+            background, text_color = TEAM_REPORT_SHIFT_FALLBACK_COLORS[color_index]
+    return {
+        "label": normalized_label,
+        "kind": kind,
+        "background": background,
+        "text_color": text_color,
+    }
+
+
+def _get_team_report_data(request):
+    """Build the authorized report data shared by the PDF and image downloads."""
     ctx = _build_context(request, require_property=True)
     if ctx.get("context_error"):
-        return HttpResponseForbidden(ctx["context_error"])
+        return None, (ctx["context_error"], 403)
 
     tenant = ctx["selected_tenant"]
     property_obj = ctx["selected_property"]
+    requested_property_id = str(request.GET.get("property_id", "")).strip()
+    if requested_property_id:
+        property_obj = next(
+            (item for item in ctx["property_options"] if str(item.id) == requested_property_id),
+            None,
+        )
+        if property_obj is None:
+            return None, ("No tienes acceso a esta sede.", 403)
     if not PermissionService.user_can_module(request.user, tenant, "scheduling"):
-        return HttpResponseForbidden("Modulo desactivado: scheduling.")
+        return None, ("Modulo desactivado: scheduling.", 403)
     if not PermissionService.user_can_property_action(request.user, tenant, property_obj, "can_access"):
-        return HttpResponseForbidden("No tienes acceso a esta sede.")
+        return None, ("No tienes acceso a esta sede.", 403)
 
     area_id = str(request.GET.get("area_id", "")).strip()
     if not area_id.isdigit():
-        return HttpResponseForbidden("Debe seleccionar un area.")
-    area = Area.objects.filter(tenant=tenant, property=property_obj, id=int(area_id), active=True).first()
-    if area is None:
-        return HttpResponseForbidden("Area no encontrada.")
-    if not PermissionService.user_can_area_view(request.user, tenant, property_obj, area):
-        return HttpResponseForbidden("No tienes permisos para ver esta area.")
+        return None, ("Debe seleccionar un area concreta.", 400)
+
+    allowed_area_ids = PermissionService.get_accessible_area_ids(
+        request.user, tenant, property_obj, action="can_view"
+    )
+    area = Area.objects.filter(
+        id=area_id,
+        tenant=tenant,
+        property=property_obj,
+        active=True,
+        id__in=allowed_area_ids,
+    ).first()
+    if area is None or not PermissionService.user_can_area_view(request.user, tenant, property_obj, area):
+        return None, ("No tienes acceso a esta area.", 403)
 
     today = timezone.localdate()
     date_from = _parse_date_or_default(request.GET.get("date_from", ""), today)
@@ -2178,49 +2235,127 @@ def scheduling_team_report_pdf(request):
     if date_from > date_to:
         date_from, date_to = date_to, date_from
     if (date_to - date_from).days > 45:
-        return HttpResponseForbidden("El reporte PDF permite un rango maximo de 45 dias.")
+        return None, ("El reporte permite un rango maximo de 45 dias.", 403)
 
-    date_columns = []
-    cursor = date_from
-    while cursor <= date_to:
-        date_columns.append(cursor)
-        cursor += timedelta(days=1)
-
-    assignments = (
+    date_columns = [date_from + timedelta(days=index) for index in range((date_to - date_from).days + 1)]
+    workers = list(
+        Worker.objects.filter(tenant=tenant, property=property_obj, area=area, active=True)
+        .order_by("last_name", "first_name")
+    )
+    assignments = list(
         ScheduleAssignment.objects.select_related("worker", "shift", "special_state")
-        .filter(
-            tenant=tenant,
-            property=property_obj,
-            worker__area=area,
-            worker__active=True,
-            date__gte=date_from,
-            date__lte=date_to,
-        )
+        .filter(tenant=tenant, property=property_obj, worker__area=area, worker__active=True, date__range=(date_from, date_to))
         .order_by("date", "shift__start_time", "shift__name", "worker__last_name", "worker__first_name")
     )
-    grid = defaultdict(list)
-    shift_rows = {}
-    state_rows = {}
+    grid = {}
     for assignment in assignments:
-        worker_name = f"{assignment.worker.first_name} {assignment.worker.last_name}".strip()
         if assignment.shift_id:
-            key = ("shift", assignment.shift_id)
-            shift_rows[key] = assignment.shift
+            cell = _team_report_cell(
+                f"{assignment.shift.start_time:%H:%M} - {assignment.shift.end_time:%H:%M}",
+                "shift",
+            )
         elif assignment.special_state_id:
-            key = ("state", assignment.special_state_id)
-            state_rows[key] = assignment.special_state
+            cell = _team_report_cell(assignment.special_state.name, "state")
         else:
             continue
-        grid[(key, assignment.date)].append(worker_name)
+        grid[(assignment.worker_id, assignment.date)] = cell
 
-    row_keys = []
-    for key, shift in sorted(
-        shift_rows.items(),
-        key=lambda item: (item[1].start_time, item[1].end_time, item[1].name),
-    ):
-        row_keys.append((key, f"{shift.start_time.strftime('%H:%M')} - {shift.end_time.strftime('%H:%M')}"))
-    for key, state in sorted(state_rows.items(), key=lambda item: item[1].name):
-        row_keys.append((key, state.name))
+    return {
+        "tenant": tenant, "property": property_obj, "area": area, "date_from": date_from, "date_to": date_to,
+        "date_columns": date_columns, "grid": grid, "workers": workers,
+    }, None
+
+
+@login_required
+@require_GET
+def scheduling_share_page(request):
+    ctx = _build_context(request, require_property=True)
+    if ctx.get("context_error"):
+        return HttpResponseForbidden(ctx["context_error"])
+
+    tenant = ctx["selected_tenant"]
+    property_obj = ctx["selected_property"]
+    requested_property_id = str(request.GET.get("property_id", "")).strip()
+    if requested_property_id:
+        property_obj = next(
+            (item for item in ctx["property_options"] if str(item.id) == requested_property_id),
+            None,
+        )
+        if property_obj is None:
+            return HttpResponseForbidden("No tienes acceso a esta sede.")
+    if not PermissionService.user_can_module(request.user, tenant, "scheduling"):
+        return HttpResponseForbidden("Modulo desactivado: scheduling.")
+    if not PermissionService.user_can_property_action(request.user, tenant, property_obj, "can_access"):
+        return HttpResponseForbidden("No tienes acceso a esta sede.")
+
+    allowed_area_ids = PermissionService.get_accessible_area_ids(
+        request.user, tenant, property_obj, action="can_view"
+    )
+    areas = list(
+        Area.objects.filter(tenant=tenant, property=property_obj, active=True, id__in=allowed_area_ids)
+        .order_by("name")
+    )
+    monday = timezone.localdate() - timedelta(days=timezone.localdate().weekday())
+    context = {
+        **ctx,
+        "selected_property": property_obj,
+        "nav_items": _build_nav_items(request.user, tenant, property_obj, request.path),
+        "areas": areas,
+        "default_date_from": monday.isoformat(),
+        "default_date_to": (monday + timedelta(days=6)).isoformat(),
+        "has_single_property": len(ctx["property_options"]) == 1,
+        "has_single_area": len(areas) == 1,
+        "is_scheduling_share_page": True,
+    }
+    return render(request, "webui/scheduling_share.html", context)
+
+
+@login_required
+@require_GET
+def scheduling_team_report_image_data(request):
+    report, error = _get_team_report_data(request)
+    if error:
+        return JsonResponse({"detail": error[0]}, status=error[1])
+
+    return JsonResponse(
+        {
+            "brand": "Pariwana Hostels",
+            "property": report["property"].name,
+            "area": report["area"].name,
+            "date_from": report["date_from"].isoformat(),
+            "date_to": report["date_to"].isoformat(),
+            "days": [
+                {"label": WEEKDAY_SHORT_LABELS[item.weekday()], "date": item.isoformat()}
+                for item in report["date_columns"]
+            ],
+            "rows": [
+                {
+                    "label": f"{worker.first_name} {worker.last_name}".strip(),
+                    "cells": [
+                        report["grid"].get((worker.id, item), _team_report_cell("Pendiente", "pending"))
+                        for item in report["date_columns"]
+                    ],
+                }
+                for worker in report["workers"]
+            ],
+        }
+    )
+
+
+@login_required
+@require_GET
+def scheduling_team_report_pdf(request):
+    report, error = _get_team_report_data(request)
+    if error:
+        return HttpResponseForbidden(error[0])
+
+    property_obj = report["property"]
+    area = report["area"]
+    date_from = report["date_from"]
+    date_to = report["date_to"]
+    date_columns = report["date_columns"]
+    grid = report["grid"]
+    workers = report["workers"]
 
     date_chunks = [date_columns[index : index + 7] for index in range(0, len(date_columns), 7)]
 
@@ -2260,19 +2395,20 @@ def scheduling_team_report_pdf(request):
             )
         )
         story.append(Spacer(1, 4))
-        header = [Paragraph("Turno", small)]
+        header = [Paragraph("Trabajador", small)]
         for day in chunk_dates:
             header.append(Paragraph(f"{day.strftime('%d/%m')}<br/>{WEEKDAY_SHORT_LABELS[day.weekday()]}", small))
         table_data = [header]
-        if row_keys:
-            for key, label in row_keys:
-                row = [Paragraph(label, small)]
+        if workers:
+            for worker in workers:
+                worker_name = f"{worker.first_name} {worker.last_name}".strip()
+                row = [Paragraph(worker_name, small)]
                 for day in chunk_dates:
-                    names = sorted(grid.get((key, day), []))
-                    row.append(Paragraph("<br/>".join(names) if names else "-", small))
+                    cell = grid.get((worker.id, day), _team_report_cell("Pendiente", "pending"))
+                    row.append(Paragraph(cell["label"], small))
                 table_data.append(row)
         else:
-            table_data.append([Paragraph("Sin asignaciones", small)] + [Paragraph("-", small) for _ in chunk_dates])
+            table_data.append([Paragraph("Sin trabajadores", small)] + [Paragraph("-", small) for _ in chunk_dates])
 
         date_col_width = remaining_width / max(1, len(chunk_dates))
         table = Table(table_data, repeatRows=1, colWidths=[first_col_width] + [date_col_width] * len(chunk_dates))
@@ -2292,6 +2428,18 @@ def scheduling_team_report_pdf(request):
                 ]
             )
         )
+        if workers:
+            color_commands = []
+            for worker_index, worker in enumerate(workers, start=1):
+                for day_index, day in enumerate(chunk_dates, start=1):
+                    cell = grid.get((worker.id, day), _team_report_cell("Pendiente", "pending"))
+                    color_commands.extend(
+                        [
+                            ("BACKGROUND", (day_index, worker_index), (day_index, worker_index), colors.HexColor(cell["background"])),
+                            ("TEXTCOLOR", (day_index, worker_index), (day_index, worker_index), colors.HexColor(cell["text_color"])),
+                        ]
+                    )
+            table.setStyle(TableStyle(color_commands))
         story.append(table)
     doc.build(story)
     response.write(buffer.getvalue())

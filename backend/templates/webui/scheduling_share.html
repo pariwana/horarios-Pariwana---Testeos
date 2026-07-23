@@ -1,0 +1,120 @@
+{% extends "webui/base.html" %}
+{% block content %}
+<style>
+  .share-page { max-width: 100%; min-width: 0; }
+  .share-controls { display:flex; flex-wrap:wrap; gap:12px; align-items:end; }
+  .share-controls > div { min-width:150px; display:grid; gap:5px; }
+  .share-controls label { font-weight:700; }
+  .share-controls button { min-height:44px; }
+  .share-context { min-height:42px; display:flex; align-items:center; padding:0 11px; border:1px solid #d1d5db; border-radius:7px; background:#f8fafc; }
+  .share-actions { display:flex; gap:10px; flex-wrap:wrap; margin-top:14px; }
+  .share-actions button { min-height:44px; min-width:150px; }
+  .share-preview-wrap { display:none; max-width:100%; min-width:0; overflow-x:auto; border:1px solid #dfe5e7; border-radius:10px; background:#f8fafc; padding:10px; margin-top:14px; }
+  .share-preview-wrap.is-visible { display:block; }
+  .share-preview { display:block; width:100%; min-width:720px; max-width:none; height:auto; background:#fff; }
+  .share-status { min-height:22px; margin:12px 0 0; color:#475467; }
+  .share-warning { color:#9a3412; }
+  @media (max-width:640px) {
+    .share-controls { display:grid; grid-template-columns:1fr; }
+    .share-controls > div, .share-controls button, .share-actions button { width:100%; font-size:16px; }
+    .share-actions { display:grid; grid-template-columns:1fr; }
+    .share-preview { min-width:680px; }
+  }
+</style>
+<div class="share-page">
+  <div class="page-header">
+    <div>
+      <h1 class="section-title">Compartir horarios</h1>
+      <p class="compact-note">Genera el horario para revisarlo y enviarlo al equipo.</p>
+    </div>
+  </div>
+  <section class="panel">
+    <form class="share-controls" data-share-form>
+      <div>
+        <label>Sede</label>
+        {% if has_single_property %}
+          <span class="share-context">{{ selected_property.name }}</span>
+          <input type="hidden" name="property_id" value="{{ selected_property.id }}" data-share-property>
+        {% else %}
+          <select name="property_id" data-share-property>
+            {% for property in property_options %}<option value="{{ property.id }}" {% if property.id == selected_property.id %}selected{% endif %}>{{ property.name }}</option>{% endfor %}
+          </select>
+        {% endif %}
+      </div>
+      <div>
+        <label>Área</label>
+        {% if has_single_area %}
+          <span class="share-context">{{ areas.0.name }}</span>
+          <input type="hidden" name="area_id" value="{{ areas.0.id }}" data-share-area>
+        {% else %}
+          <select name="area_id" required data-share-area>
+            <option value="">Selecciona un área</option>
+            {% for area in areas %}<option value="{{ area.id }}">{{ area.name }}</option>{% endfor %}
+          </select>
+        {% endif %}
+      </div>
+      <div><label>Desde</label><input type="date" name="date_from" value="{{ default_date_from }}" required data-share-from></div>
+      <div><label>Hasta</label><input type="date" name="date_to" value="{{ default_date_to }}" required data-share-to></div>
+      <button class="primary" type="button" data-share-preview-button>Ver vista previa</button>
+    </form>
+    <div class="share-actions">
+      <button type="button" disabled data-share-image>Descargar imagen</button>
+      <button type="button" disabled data-share-pdf>Descargar PDF</button>
+    </div>
+    <p class="share-status" data-share-status aria-live="polite">Selecciona un área y fechas para ver el reporte.</p>
+    <div class="share-preview-wrap" data-share-preview-wrap>
+      <canvas class="share-preview" data-share-canvas aria-label="Vista previa del reporte de horarios"></canvas>
+    </div>
+  </section>
+</div>
+<script>
+  (function () {
+    var form = document.querySelector('[data-share-form]');
+    var property = document.querySelector('[data-share-property]');
+    var area = document.querySelector('[data-share-area]');
+    var dateFrom = document.querySelector('[data-share-from]');
+    var dateTo = document.querySelector('[data-share-to]');
+    var previewButton = document.querySelector('[data-share-preview-button]');
+    var imageButton = document.querySelector('[data-share-image]');
+    var pdfButton = document.querySelector('[data-share-pdf]');
+    var canvas = document.querySelector('[data-share-canvas]');
+    var previewWrap = document.querySelector('[data-share-preview-wrap]');
+    var status = document.querySelector('[data-share-status]');
+    var validData = null;
+    function slug(value) { return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''); }
+    function dateLabel(value) { var parts = value.split('-'); return parts[2] + '/' + parts[1] + '/' + parts[0]; }
+    function color(cell) {
+      return [cell.background || '#ffffff', cell.text_color || '#111827'];
+    }
+    function draw(data) {
+      var scale = 2, width = 1640, margin = 34, labelWidth = 220, cellWidth = (width - margin * 2 - labelWidth) / 7;
+      var chunks = []; for (var start = 0; start < data.days.length; start += 7) chunks.push(data.days.slice(start, start + 7));
+      var rows = data.rows.length ? data.rows : [{label:'Sin trabajadores', cells:[]}];
+      var layouts = chunks.map(function() { return rows.map(function(row) { return {row:row, height:54}; }); });
+      var height = 188 + layouts.reduce(function(total, chunk) { return total + 44 + chunk.reduce(function(sum, item) { return sum + item.height; }, 0) + 32; }, 0);
+      canvas.width = width * scale; canvas.height = height * scale;
+      var ctx = canvas.getContext('2d'); ctx.scale(scale, scale); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, width, height);
+      ctx.fillStyle = '#0f766e'; ctx.fillRect(0, 0, width, 12); ctx.fillStyle = '#172033'; ctx.font = '700 30px Arial'; ctx.fillText(data.brand, margin, 54);
+      ctx.font = '700 23px Arial'; ctx.fillText(data.property + ' · ' + data.area, margin, 86); ctx.fillStyle = '#475467'; ctx.font = '18px Arial'; ctx.fillText(dateLabel(data.date_from) + ' al ' + dateLabel(data.date_to), margin, 114);
+      var y = 144;
+      chunks.forEach(function(days, chunkIndex) {
+        ctx.fillStyle = '#f2f4f7'; ctx.fillRect(margin, y, labelWidth, 44); ctx.fillStyle = '#344054'; ctx.font = '700 15px Arial'; ctx.fillText('Trabajador', margin + 10, y + 27);
+        days.forEach(function(day, index) { var x = margin + labelWidth + index * cellWidth; ctx.fillStyle = '#f2f4f7'; ctx.fillRect(x, y, cellWidth, 44); ctx.fillStyle = '#344054'; ctx.textAlign = 'center'; ctx.font = '700 14px Arial'; ctx.fillText(day.label, x + cellWidth / 2, y + 18); ctx.font = '13px Arial'; ctx.fillText(day.date.slice(8,10) + '/' + day.date.slice(5,7), x + cellWidth / 2, y + 34); }); ctx.textAlign = 'left';
+        var rowY = y + 44; layouts[chunkIndex].forEach(function(item, rowIndex) { var row = item.row, rowHeight = item.height; ctx.fillStyle = rowIndex % 2 ? '#fcfcfd' : '#fff'; ctx.fillRect(margin, rowY, labelWidth, rowHeight); ctx.fillStyle = '#172033'; ctx.font = '700 14px Arial'; ctx.fillText(row.label, margin + 10, rowY + 30); days.forEach(function(day,index) { var x = margin + labelWidth + index * cellWidth, cell = (row.cells || [])[chunkIndex * 7 + index] || {label:'Pendiente', kind:'pending', background:'#ffffff', text_color:'#b91c1c'}, palette = color(cell); ctx.fillStyle = palette[0]; ctx.fillRect(x + 3, rowY + 4, cellWidth - 6, rowHeight - 8); ctx.strokeStyle = '#e4e7ec'; ctx.strokeRect(x + 3, rowY + 4, cellWidth - 6, rowHeight - 8); ctx.fillStyle = palette[1]; ctx.font = '12px Arial'; ctx.fillText(cell.label, x + 8, rowY + 30, cellWidth - 15); }); rowY += rowHeight; });
+        ctx.strokeStyle = '#d0d5dd'; ctx.strokeRect(margin, y, labelWidth + days.length * cellWidth, rowY - y); y = rowY + 32;
+      });
+    }
+    function invalidate() { validData = null; imageButton.disabled = true; pdfButton.disabled = true; previewWrap.classList.remove('is-visible'); status.textContent = 'Los filtros cambiaron. Vuelve a ver la vista previa.'; }
+    [property, area, dateFrom, dateTo].forEach(function(field) { if (field) field.addEventListener('change', invalidate); });
+    previewButton.addEventListener('click', function() {
+      if (!area.value || !dateFrom.value || !dateTo.value) { status.textContent = 'Selecciona un área y fechas válidas.'; return; }
+      if (dateFrom.value > dateTo.value) { status.textContent = 'La fecha Desde no puede ser posterior a Hasta.'; return; }
+      previewButton.disabled = true; previewButton.textContent = 'Preparando vista previa…';
+      var query = 'property_id=' + encodeURIComponent(property.value) + '&area_id=' + encodeURIComponent(area.value) + '&date_from=' + encodeURIComponent(dateFrom.value) + '&date_to=' + encodeURIComponent(dateTo.value);
+      fetch('{% url "webui-scheduling-team-report-image-data" %}?' + query).then(function(response) { return response.json().then(function(body) { return {ok:response.ok, body:body}; }); }).then(function(result) { if (!result.ok) throw new Error(result.body.detail || 'No se pudo preparar el reporte.'); validData = result.body; draw(validData); previewWrap.classList.add('is-visible'); imageButton.disabled = false; pdfButton.disabled = false; status.textContent = validData.rows.length ? 'Vista previa lista. Las celdas sin asignar se muestran en rojo claro.' : 'No hay información de horarios para este rango.'; }).catch(function(error) { status.textContent = error.message || 'No se pudo preparar el reporte.'; }).finally(function() { previewButton.disabled = false; previewButton.textContent = 'Ver vista previa'; });
+    });
+    imageButton.addEventListener('click', function() { if (!validData) return; canvas.toBlob(function(blob) { var url = URL.createObjectURL(blob), link = document.createElement('a'); link.href = url; link.download = 'horarios-' + slug(validData.property) + '-' + slug(validData.area) + '-' + validData.date_from + '-al-' + validData.date_to + '.jpg'; document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(function() { URL.revokeObjectURL(url); }, 0); }, 'image/jpeg', 0.90); });
+    pdfButton.addEventListener('click', function() { if (!validData) return; window.location.href = '{% url "webui-scheduling-team-report-pdf" %}?property_id=' + encodeURIComponent(property.value) + '&area_id=' + encodeURIComponent(area.value) + '&date_from=' + encodeURIComponent(dateFrom.value) + '&date_to=' + encodeURIComponent(dateTo.value); });
+  })();
+</script>
+{% endblock %}

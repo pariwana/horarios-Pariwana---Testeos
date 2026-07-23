@@ -8,12 +8,17 @@
       --schedule-line: #dfe5e7;
       --schedule-teal: #0f766e;
       --schedule-bg: #f5f7f7;
+      overflow-x: hidden;
     }
+    html:has(.scheduling-page),
+    body:has(.scheduling-page),
+    .layout:has(.scheduling-page) { overflow-x: hidden; }
     .scheduling-advanced-options summary { cursor: pointer; font-size: 13px; font-weight: 700; color: #0f766e; }
     .scheduling-advanced-fields { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; margin-top: 8px; }
     .scheduling-page .page-header { margin-bottom: 14px; }
     .scheduling-page .section-title { color: var(--schedule-ink); }
     .scheduling-page .panel { border-color: var(--schedule-line); box-shadow: none; }
+    .scheduling-page > .panel { min-width: 0; max-width: 100%; overflow: hidden; contain: paint; }
     .scheduling-filters-form {
       display: grid;
       grid-template-columns: max-content max-content max-content minmax(260px, 1fr);
@@ -82,8 +87,15 @@
       color: #6b7280;
       font-size: 12px;
     }
+    .scheduling-team-report .filters-bar { display: flex; gap: 10px; align-items: end; flex-wrap: wrap; }
+    .scheduling-team-report .filters-bar > div { min-width: 0; }
+    .scheduling-team-report .filters-bar button { min-height: 44px; }
     .scheduling-table-wrap {
       overflow: auto;
+      width: 100%;
+      box-sizing: border-box;
+      max-width: 100%;
+      min-width: 0;
       max-height: 72vh;
       border: 1px solid #e5e7eb;
       border-radius: 10px;
@@ -481,6 +493,8 @@
       .scheduling-toolbar,
       .scheduling-team-report,
       .scheduling-meta { display: none; }
+      .scheduling-page .page-header { display: flex; margin-bottom: 10px; }
+      .scheduling-page .page-header > div { display: none; }
       .scheduling-filters-form {
         grid-template-columns: minmax(0, 1fr);
         gap: 8px;
@@ -635,6 +649,8 @@
       #copy-assignment-modal .modal-actions button {
         width: 100%;
       }
+      .scheduling-team-report .filters-bar { display: grid; grid-template-columns: 1fr; }
+      .scheduling-team-report .filters-bar button { width: 100%; font-size: 16px; }
     }
     @media (max-width: 460px) {
       .mobile-day-grid {
@@ -745,32 +761,6 @@
     {% endif %}
     <p class="scheduling-hint">Desplaza la grilla horizontalmente. Elige “Sin asignar” para limpiar una celda.</p>
     <p class="scheduling-scroll-note">En telefono se muestra una vista por trabajador. En desktop se mantiene la grilla mensual.</p>
-  </section>
-
-  <section class="panel scheduling-team-report" style="margin-bottom: 12px;">
-    <details>
-      <summary>Reporte del equipo</summary>
-      <form method="get" action="/app/scheduling/team-report.pdf" class="filters-bar" style="margin-top:10px;">
-        <div>
-          <label>Desde</label>
-          <input type="date" name="date_from" value="{{ month_value }}-01" required>
-        </div>
-        <div>
-          <label>Hasta</label>
-          <input type="date" name="date_to" value="{{ month_value }}-{{ days|length|stringformat:'02d' }}" required>
-        </div>
-        <div>
-          <label>Area</label>
-          <select name="area_id" required>
-            {% for area in areas %}
-              <option value="{{ area.id }}" {% if selected_area_id == area.id %}selected{% endif %}>{{ area.name }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <button class="primary" type="submit">Descargar PDF</button>
-      </form>
-      <p class="compact-note">El PDF agrupa trabajadores por fecha y turno. Los estados especiales aparecen al final.</p>
-    </details>
   </section>
 
   {% if pending_previews %}
@@ -2178,6 +2168,280 @@
         });
       }
 
+      {% comment %}
+      var teamReportForm = document.querySelector("[data-team-report-form]");
+      var teamReportImageDownload = document.querySelector("[data-team-report-image-download]");
+      function teamReportSlug(value) {
+        return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      }
+      function teamReportDate(value) {
+        var parts = value.split("-");
+        return parts[2] + "/" + parts[1] + "/" + parts[0];
+      }
+      function teamReportColors(row) {
+        var label = row.label.toLowerCase();
+        if (label === "libre" || label === "off") return { background: "#e5e7eb", text: "#374151" };
+        if (label.indexOf("pendiente") >= 0 || label.indexOf("sin asignar") >= 0) return { background: "#fee2e2", text: "#991b1b" };
+        if (row.kind === "state") return { background: "#ede9fe", text: "#4338ca" };
+        return { background: "#dbeafe", text: "#1e3a8a" };
+      }
+      function drawTeamReportImage(data) {
+        var scale = 2, width = 1640, margin = 34, labelWidth = 220, cellWidth = (width - margin * 2 - labelWidth) / 7;
+        var chunks = [];
+        for (var start = 0; start < data.days.length; start += 7) chunks.push(data.days.slice(start, start + 7));
+        var rows = data.rows.length ? data.rows : [{ label: "Sin asignaciones", kind: "empty", cells: [] }];
+        var chunkRows = chunks.map(function (days, chunkIndex) {
+          return rows.map(function (row) {
+            var mostNames = 0;
+            days.forEach(function (day, index) { mostNames = Math.max(mostNames, ((row.cells || [])[chunkIndex * 7 + index] || []).length); });
+            return { row: row, height: Math.max(54, 14 + Math.max(1, mostNames) * 15) };
+          });
+        });
+        var height = 188 + chunkRows.reduce(function (total, chunk) {
+          return total + 44 + chunk.reduce(function (rowTotal, item) { return rowTotal + item.height; }, 0) + 32;
+        }, 0);
+        var canvas = document.createElement("canvas");
+        canvas.width = width * scale; canvas.height = height * scale;
+        var context = canvas.getContext("2d"); context.scale(scale, scale);
+        context.fillStyle = "#ffffff"; context.fillRect(0, 0, width, height);
+        context.fillStyle = "#0f766e"; context.fillRect(0, 0, width, 12);
+        context.fillStyle = "#172033"; context.font = "700 30px Arial, sans-serif"; context.fillText(data.brand, margin, 54);
+        context.font = "700 23px Arial, sans-serif"; context.fillText(data.property + " · " + data.area, margin, 86);
+        context.fillStyle = "#475467"; context.font = "18px Arial, sans-serif";
+        context.fillText(teamReportDate(data.date_from) + " al " + teamReportDate(data.date_to), margin, 114);
+        var y = 144;
+        chunks.forEach(function (days, chunkIndex) {
+          context.fillStyle = "#344054"; context.font = "700 16px Arial, sans-serif";
+          if (chunks.length > 1) context.fillText("Fechas " + teamReportDate(days[0].date) + " al " + teamReportDate(days[days.length - 1].date), margin, y - 9);
+          context.fillStyle = "#f2f4f7"; context.fillRect(margin, y, labelWidth, 44);
+          context.fillStyle = "#344054"; context.font = "700 15px Arial, sans-serif"; context.fillText("Turno / estado", margin + 10, y + 27);
+          days.forEach(function (day, index) {
+            var x = margin + labelWidth + index * cellWidth;
+            context.fillStyle = "#f2f4f7"; context.fillRect(x, y, cellWidth, 44);
+            context.fillStyle = "#344054"; context.textAlign = "center"; context.font = "700 14px Arial, sans-serif";
+            context.fillText(day.label, x + cellWidth / 2, y + 18); context.font = "13px Arial, sans-serif";
+            context.fillText(day.date.slice(8, 10) + "/" + day.date.slice(5, 7), x + cellWidth / 2, y + 34);
+          });
+          context.textAlign = "left";
+          var rowY = y + 44;
+          chunkRows[chunkIndex].forEach(function (rowItem, rowIndex) {
+            var row = rowItem.row, rowHeight = rowItem.height;
+            context.fillStyle = rowIndex % 2 ? "#fcfcfd" : "#ffffff"; context.fillRect(margin, rowY, labelWidth, rowHeight);
+            context.fillStyle = "#172033"; context.font = "700 14px Arial, sans-serif"; context.fillText(row.label, margin + 10, rowY + Math.min(30, rowHeight - 12));
+            days.forEach(function (day, index) {
+              var cellX = margin + labelWidth + index * cellWidth, names = (row.cells || [])[chunkIndex * 7 + index] || [];
+              var colors = teamReportColors(row); context.fillStyle = names.length ? colors.background : "#fee2e2";
+              context.fillRect(cellX + 3, rowY + 4, cellWidth - 6, rowHeight - 8); context.strokeStyle = "#e4e7ec"; context.strokeRect(cellX + 3, rowY + 4, cellWidth - 6, rowHeight - 8);
+              context.fillStyle = names.length ? colors.text : "#991b1b"; context.font = "12px Arial, sans-serif";
+              (names.length ? names : ["Sin asignar"]).forEach(function (name, nameIndex) { context.fillText(name, cellX + 8, rowY + 20 + nameIndex * 15, cellWidth - 15); });
+            });
+            rowY += rowHeight;
+          });
+          context.strokeStyle = "#d0d5dd"; context.strokeRect(margin, y, labelWidth + days.length * cellWidth, rowY - y);
+          y = rowY + 32;
+        });
+        context.fillStyle = "#667085"; context.font = "13px Arial, sans-serif";
+        context.fillText("Reporte de horarios · Libre en gris · Pendiente o sin asignar en rojo claro", margin, height - 20);
+        return canvas;
+      }
+      if (teamReportForm && teamReportImageDownload) {
+        teamReportImageDownload.addEventListener("click", function () {
+          var dateFrom = teamReportForm.querySelector("[data-team-report-date-from]").value;
+          var dateTo = teamReportForm.querySelector("[data-team-report-date-to]").value;
+          var area = teamReportForm.querySelector("[data-team-report-area]");
+          if (!area.value || !dateFrom || !dateTo) { showToast("Selecciona área y fechas para descargar la imagen.", true); return; }
+          teamReportImageDownload.disabled = true; teamReportImageDownload.textContent = "Preparando imagen…";
+          fetch("{% url 'webui-scheduling-team-report-image-data' %}?area_id=" + encodeURIComponent(area.value) + "&date_from=" + encodeURIComponent(dateFrom) + "&date_to=" + encodeURIComponent(dateTo))
+            .then(function (response) { return response.json().then(function (body) { return { ok: response.ok, body: body }; }); })
+            .then(function (result) {
+              if (!result.ok) throw new Error(result.body.detail || "No se pudo preparar la imagen.");
+              drawTeamReportImage(result.body).toBlob(function (blob) {
+                var url = URL.createObjectURL(blob), link = document.createElement("a");
+                link.href = url; link.download = "horarios-" + teamReportSlug(result.body.property) + "-" + teamReportSlug(result.body.area) + "-" + result.body.date_from + "-al-" + result.body.date_to + ".jpg";
+                document.body.appendChild(link); link.click(); link.remove(); window.setTimeout(function () { URL.revokeObjectURL(url); }, 0);
+                showToast("Imagen descargada.");
+              }, "image/jpeg", 0.90);
+            })
+            .catch(function (error) { showToast(error.message || "No se pudo descargar la imagen.", true); })
+            .finally(function () { teamReportImageDownload.disabled = false; teamReportImageDownload.textContent = "Descargar imagen"; });
+        });
+      }
+
+      {% endcomment %}
+      {% comment %}
+      var weeklyPanel = document.querySelector("[data-weekly-image-panel]");
+      var weeklyOpen = document.querySelector("[data-weekly-image-open]");
+      var weeklyArea = document.querySelector("[data-weekly-image-area]");
+      var weeklyWeek = document.querySelector("[data-weekly-image-week]");
+      var weeklyStatus = document.querySelector("[data-weekly-image-status]");
+      var weeklyWarning = document.querySelector("[data-weekly-image-warning]");
+      var weeklyCanvas = document.querySelector("[data-weekly-image-canvas]");
+      var weeklyPreviewWrap = document.querySelector("[data-weekly-image-preview-wrap]");
+      var weeklyActions = document.querySelector("[data-weekly-image-actions]");
+      var weeklyPdfDownload = document.querySelector("[data-weekly-image-pdf-download]");
+      var weeklyData = null;
+
+      function dateToInputValue(value) {
+        return value.getFullYear() + "-" + String(value.getMonth() + 1).padStart(2, "0") + "-" + String(value.getDate()).padStart(2, "0");
+      }
+      function currentMonday() {
+        var value = new Date();
+        value.setHours(0, 0, 0, 0);
+        value.setDate(value.getDate() - ((value.getDay() + 6) % 7));
+        return value;
+      }
+      function formatDate(value) {
+        var parts = value.split("-");
+        return parts[2] + "/" + parts[1] + "/" + parts[0];
+      }
+      function moveWeeklyWeek(days) {
+        var value = weeklyWeek && weeklyWeek.value ? new Date(weeklyWeek.value + "T00:00:00") : currentMonday();
+        value.setDate(value.getDate() + days);
+        weeklyWeek.value = dateToInputValue(value);
+      }
+      function colorForCell(cell) {
+        if (cell.kind === "free") return { background: "#e5e7eb", text: "#374151" };
+        if (cell.kind === "pending") return { background: "#fee2e2", text: "#991b1b" };
+        if (cell.kind === "state") {
+          var stateColors = ["#ede9fe", "#dbeafe", "#dcfce7", "#fef3c7", "#fce7f3"];
+          var sum = 0;
+          for (var index = 0; index < cell.color_key.length; index += 1) sum += cell.color_key.charCodeAt(index);
+          return { background: stateColors[sum % stateColors.length], text: "#334155" };
+        }
+        var shiftColors = ["#dbeafe", "#dcfce7", "#fef3c7", "#fee2e2", "#e0f2fe", "#f3e8ff"];
+        var shiftSum = 0;
+        for (var charIndex = 0; charIndex < cell.color_key.length; charIndex += 1) shiftSum += cell.color_key.charCodeAt(charIndex);
+        return { background: shiftColors[shiftSum % shiftColors.length], text: "#1f2937" };
+      }
+      function drawWeeklyImage(data) {
+        var scale = 2;
+        var logicalWidth = 1640;
+        var nameWidth = 290;
+        var cellWidth = (logicalWidth - nameWidth - 60) / 7;
+        var headerHeight = 172;
+        var rowHeight = 76;
+        var logicalHeight = headerHeight + Math.max(data.rows.length, 1) * rowHeight + 64;
+        weeklyCanvas.width = logicalWidth * scale;
+        weeklyCanvas.height = logicalHeight * scale;
+        var context = weeklyCanvas.getContext("2d");
+        context.scale(scale, scale);
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, logicalWidth, logicalHeight);
+        context.fillStyle = "#0f766e";
+        context.fillRect(0, 0, logicalWidth, 12);
+        context.fillStyle = "#172033";
+        context.font = "700 30px Arial, sans-serif";
+        context.fillText(data.brand, 30, 54);
+        context.font = "700 24px Arial, sans-serif";
+        context.fillText(data.property + " · " + data.area, 30, 88);
+        context.fillStyle = "#475467";
+        context.font = "18px Arial, sans-serif";
+        context.fillText("Semana del " + formatDate(data.week_start) + " al " + formatDate(data.week_end), 30, 116);
+        context.fillStyle = "#667085";
+        context.font = "15px Arial, sans-serif";
+        context.fillText("Horario semanal · " + data.rows.length + " trabajadores", 30, 142);
+        var tableTop = 160;
+        context.strokeStyle = "#d0d5dd";
+        context.lineWidth = 1;
+        context.fillStyle = "#f2f4f7";
+        context.fillRect(30, tableTop, nameWidth, 44);
+        context.fillStyle = "#344054";
+        context.font = "700 16px Arial, sans-serif";
+        context.fillText("Trabajador", 44, tableTop + 28);
+        data.days.forEach(function (day, index) {
+          var x = 30 + nameWidth + index * cellWidth;
+          context.fillStyle = "#f2f4f7";
+          context.fillRect(x, tableTop, cellWidth, 44);
+          context.fillStyle = "#344054";
+          context.font = "700 15px Arial, sans-serif";
+          context.textAlign = "center";
+          context.fillText(day.label, x + cellWidth / 2, tableTop + 19);
+          context.font = "14px Arial, sans-serif";
+          context.fillText(day.date.slice(8, 10) + "/" + day.date.slice(5, 7), x + cellWidth / 2, tableTop + 35);
+        });
+        context.textAlign = "left";
+        if (!data.rows.length) {
+          context.fillStyle = "#f8fafc";
+          context.fillRect(30, tableTop + 44, logicalWidth - 60, rowHeight);
+          context.fillStyle = "#475467";
+          context.font = "18px Arial, sans-serif";
+          context.fillText("No hay trabajadores activos en esta área.", 44, tableTop + 89);
+        }
+        data.rows.forEach(function (row, rowIndex) {
+          var y = tableTop + 44 + rowIndex * rowHeight;
+          context.fillStyle = rowIndex % 2 ? "#fcfcfd" : "#ffffff";
+          context.fillRect(30, y, nameWidth, rowHeight);
+          context.fillStyle = "#172033";
+          context.font = "700 17px Arial, sans-serif";
+          context.fillText(row.name, 44, y + 44);
+          row.cells.forEach(function (cell, cellIndex) {
+            var x = 30 + nameWidth + cellIndex * cellWidth;
+            var colors = colorForCell(cell);
+            context.fillStyle = colors.background;
+            context.fillRect(x + 5, y + 9, cellWidth - 10, rowHeight - 18);
+            context.fillStyle = colors.text;
+            context.font = "700 15px Arial, sans-serif";
+            context.textAlign = "center";
+            var label = cell.label.length > 18 ? cell.label.slice(0, 17) + "…" : cell.label;
+            context.fillText(label, x + cellWidth / 2, y + 44);
+          });
+          context.textAlign = "left";
+        });
+        var legendY = logicalHeight - 28;
+        context.fillStyle = "#667085";
+        context.font = "14px Arial, sans-serif";
+        context.fillText("Leyenda: gris = Libre · rojo claro = Pendiente · otros colores = turnos y estados especiales", 30, legendY);
+        context.strokeStyle = "#d0d5dd";
+        context.strokeRect(30, tableTop, logicalWidth - 60, 44 + Math.max(data.rows.length, 1) * rowHeight);
+      }
+      function slug(value) {
+        return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      }
+      function loadWeeklyPreview() {
+        if (!weeklyArea.value) {
+          weeklyStatus.textContent = "Selecciona un área concreta para continuar.";
+          return;
+        }
+        weeklyStatus.textContent = "Generando vista previa…";
+        weeklyWarning.hidden = true;
+        weeklyActions.hidden = true;
+        fetch("{% url 'webui-scheduling-weekly-image-data' %}?area_id=" + encodeURIComponent(weeklyArea.value) + "&week_start=" + encodeURIComponent(weeklyWeek.value), { headers: { "X-Requested-With": "XMLHttpRequest" } })
+          .then(function (response) { return response.json().then(function (body) { return { ok: response.ok, body: body }; }); })
+          .then(function (result) {
+            if (!result.ok) throw new Error(result.body.detail || "No se pudo preparar la imagen.");
+            weeklyData = result.body;
+            drawWeeklyImage(weeklyData);
+            if (weeklyPdfDownload) {
+              weeklyPdfDownload.href = "{% url 'webui-scheduling-team-report-pdf' %}?area_id=" + encodeURIComponent(weeklyData.area_id) + "&date_from=" + encodeURIComponent(weeklyData.week_start) + "&date_to=" + encodeURIComponent(weeklyData.week_end);
+            }
+            weeklyPreviewWrap.hidden = false;
+            weeklyActions.hidden = false;
+            weeklyStatus.textContent = weeklyData.rows.length ? "Vista previa lista. Revísala antes de descargar." : "Vista previa lista: el área no tiene trabajadores activos.";
+            if (weeklyData.pending_count) {
+              weeklyWarning.hidden = false;
+              weeklyWarning.textContent = "Hay " + weeklyData.pending_count + " asignación(es) pendiente(s); se mostrarán en rojo claro.";
+            }
+          })
+          .catch(function (error) { weeklyStatus.textContent = error.message || "No se pudo generar la vista previa."; });
+      }
+      if (weeklyPanel) {
+        weeklyWeek.value = dateToInputValue(currentMonday());
+        weeklyOpen.addEventListener("click", function () { weeklyPanel.hidden = false; weeklyPanel.scrollIntoView({ behavior: "smooth", block: "start" }); });
+        document.querySelector("[data-weekly-image-previous]").addEventListener("click", function () { moveWeeklyWeek(-7); });
+        document.querySelector("[data-weekly-image-next]").addEventListener("click", function () { moveWeeklyWeek(7); });
+        document.querySelector("[data-weekly-image-preview-button]").addEventListener("click", loadWeeklyPreview);
+        document.querySelector("[data-weekly-image-download]").addEventListener("click", function () {
+          if (!weeklyData) return;
+          weeklyCanvas.toBlob(function (blob) {
+            var link = document.createElement("a");
+            link.href = URL.createObjectURL(blob);
+            link.download = "horarios-" + slug(weeklyData.property) + "-" + slug(weeklyData.area) + "-" + weeklyData.week_start + "-al-" + weeklyData.week_end + ".jpg";
+            document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(link.href);
+          }, "image/jpeg", 0.90);
+        });
+      }
+
+      {% endcomment %}
       updateButtons();
     })();
   </script>
