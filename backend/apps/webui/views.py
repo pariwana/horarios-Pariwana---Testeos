@@ -1682,13 +1682,25 @@ def scheduling_page(request):
     month_next_value = f"{next_year:04d}-{next_month:02d}"
 
     area_id = request.GET.get("area_id")
-    area_queryset = Area.objects.filter(tenant=tenant, property=property_obj, active=True).order_by("name")
+    allowed_area_ids = PermissionService.get_accessible_area_ids(
+        request.user,
+        tenant,
+        property_obj,
+        action="can_view",
+    )
+    area_queryset = Area.objects.filter(
+        tenant=tenant,
+        property=property_obj,
+        active=True,
+        id__in=allowed_area_ids,
+    ).order_by("name")
     selected_area = area_queryset.filter(id=area_id).first() if area_id else None
 
     workers = Worker.objects.select_related("area").filter(
         tenant=tenant,
         property=property_obj,
         active=True,
+        area_id__in=allowed_area_ids,
     )
     if selected_area:
         workers = workers.filter(area=selected_area)
@@ -1721,6 +1733,7 @@ def scheduling_page(request):
         property=property_obj,
         date__gte=start_date,
         date__lte=end_date,
+        worker__area_id__in=allowed_area_ids,
     )
     assignment_index = {(item.worker_id, item.date): item for item in assignments}
 
@@ -1728,7 +1741,12 @@ def scheduling_page(request):
         SpecialState.objects.filter(tenant=tenant, property=property_obj, active=True).order_by("name")
     )
     shifts = list(
-        Shift.objects.filter(tenant=tenant, property=property_obj, active=True)
+        Shift.objects.filter(
+            tenant=tenant,
+            property=property_obj,
+            active=True,
+            area_id__in=allowed_area_ids,
+        )
         .select_related("area")
         .order_by("area__name", "name", "buk_code")
     )
@@ -1777,15 +1795,20 @@ def scheduling_page(request):
             selected_shift_id = None
             selected_state_id = None
             selected_value = ""
+            display_label = "Sin asignar"
             if assignment:
                 if assignment.shift_id:
                     selected_value = f"shift:{assignment.shift_id}"
                     code = assignment.shift.buk_code
+                    display_label = (
+                        f"{assignment.shift.start_time:%H:%M}\u2013{assignment.shift.end_time:%H:%M}"
+                    )
                     is_night = bool(assignment.shift.is_night_shift)
                     selected_shift_id = assignment.shift_id
                 elif assignment.special_state_id:
                     selected_value = f"state:{assignment.special_state_id}"
                     code = assignment.special_state.buk_code or assignment.special_state.name
+                    display_label = assignment.special_state.name
                     selected_state_id = assignment.special_state_id
             is_editable = can_schedule and area_allowed
             if code:
@@ -1806,6 +1829,7 @@ def scheduling_page(request):
                     "selected_shift_id": selected_shift_id,
                     "selected_state_id": selected_state_id,
                     "display_code": code,
+                    "display_label": display_label,
                     "is_night": is_night,
                     "is_focus": bool(focus_date and day_meta["date"] == focus_date),
                     "is_recent_edit": bool(
@@ -2065,7 +2089,9 @@ def scheduling_page(request):
             "worker_query": worker_query,
             "focus_date_value": focus_date_value,
             "areas": area_queryset,
-            "selected_area_id": int(area_id) if area_id and area_id.isdigit() else None,
+            "selected_area_id": selected_area.id if selected_area else None,
+            "show_area_selector": is_tenant_admin or area_queryset.count() > 1,
+            "area_filter_label": "Todas" if is_tenant_admin else "Todas mis áreas",
             "can_schedule": can_schedule,
             "is_tenant_admin": is_tenant_admin,
             "is_month_closed": is_month_closed,
@@ -2087,6 +2113,8 @@ def scheduling_page(request):
             "range_template_preview": range_template_preview,
             "pending_previews": pending_previews,
             "templates_load_error": templates_load_error,
+            "is_scheduling_page": True,
+            "has_single_property": len(ctx["property_options"]) == 1,
         },
     )
 

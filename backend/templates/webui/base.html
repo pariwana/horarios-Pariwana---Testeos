@@ -23,7 +23,7 @@
     }
     * { box-sizing: border-box; }
     body { margin: 0; font-family: Arial, sans-serif; color: var(--ink); background: var(--bg); }
-    .layout { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
+    .layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: 100vh; }
     .sidebar { background: #0b1220; color: #e5e7eb; padding: 18px 14px; }
     .sidebar-header { display: block; }
     .brand { font-size: 16px; font-weight: 700; margin-bottom: 18px; }
@@ -44,7 +44,7 @@
     .topbar { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
     .topbar form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 0; }
     .topbar-context-form { flex: 1 1 auto; min-width: min(100%, 520px); }
-    .topbar-user-actions { display: flex; gap: 10px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
+    .topbar-user-actions { display: flex; gap: 10px; align-items: center; justify-content: flex-end; flex-wrap: wrap; margin-left: auto; flex: 0 1 auto; }
     .topbar-logout-form { flex: 0 0 auto; }
     .topbar-user { display: grid; gap: 2px; justify-items: end; line-height: 1.2; }
     .topbar-user-label { font-size: 11px; color: var(--muted); }
@@ -261,6 +261,53 @@
         <form method="post" action="/app/context/" class="topbar-context-form">
           {% csrf_token %}
           <input type="hidden" name="next" value="{{ request.path }}">
+          {% if is_scheduling_page and not user.is_super_admin %}
+            <div>
+              <label>Sede</label>
+              {% if has_single_property %}
+                <strong>{{ selected_property.name }}</strong>
+                <input type="hidden" name="property_id" value="{{ selected_property.id }}">
+              {% else %}
+                <select name="property_id" onchange="this.form.submit()">
+                  {% for property in property_options %}
+                    <option value="{{ property.id }}" {% if selected_property and selected_property.id == property.id %}selected{% endif %}>{{ property.name }}</option>
+                  {% endfor %}
+                </select>
+              {% endif %}
+            </div>
+          {% elif is_scheduling_page and user.is_super_admin %}
+            <details class="scheduling-advanced-options">
+              <summary>Opciones avanzadas</summary>
+              <div class="scheduling-advanced-fields">
+                <div>
+                  <label>Tenant</label>
+                  <select name="tenant_id">
+                    {% for tenant in tenant_options %}
+                      <option value="{{ tenant.id }}" {% if selected_tenant and selected_tenant.id == tenant.id %}selected{% endif %}>{{ tenant.name }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div>
+                  <label>Sede</label>
+                  <select name="property_id">
+                    {% for property in property_options %}
+                      <option value="{{ property.id }}" {% if selected_property and selected_property.id == property.id %}selected{% endif %}>{{ property.name }}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <div>
+                  <label>Sesion Soporte</label>
+                  <select name="support_session_id">
+                    <option value="">Sin soporte</option>
+                    {% for session in support_sessions %}
+                      <option value="{{ session.id }}" {% if support_session and support_session.id == session.id %}selected{% endif %}>#{{ session.id }} - {{ session.tenant.name }}{% if session.property %} / {{ session.property.name }}{% endif %}</option>
+                    {% endfor %}
+                  </select>
+                </div>
+                <button class="primary" type="submit">Aplicar</button>
+              </div>
+            </details>
+          {% else %}
           <div>
             <label>Tenant</label>
             <select name="tenant_id">
@@ -293,6 +340,7 @@
           <div style="align-self: end;">
             <button class="primary" type="submit">Aplicar</button>
           </div>
+          {% endif %}
         </form>
         <div class="topbar-user-actions">
           <div class="topbar-user" title="{{ user.email }}">
