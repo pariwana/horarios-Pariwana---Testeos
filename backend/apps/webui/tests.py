@@ -5182,7 +5182,7 @@ class WebUiControlTests(TestCase):
         self.assertContains(response, "focus_date=")
         self.assertContains(response, "Resumen por area")
         self.assertContains(response, "Recepcion")
-        self.assertContains(response, "Alerta Alta")
+        self.assertContains(response, "Alerta Critico")
         self.assertContains(response, "Cobertura 0%")
         self.assertContains(response, "15 dias sin asignacion de 15 dias requeridos")
         self.assertContains(response, "Detalle de pendientes")

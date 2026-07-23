@@ -7895,15 +7895,20 @@ def control_page(request):
         covered_days = area_covered_days[area_name]
         missing_days = area_missing_days[area_name]
         coverage_percent = round((covered_days / required_days) * 100) if required_days else 100
-        if coverage_percent < 70 or missing_days >= 10:
-            risk_level = "Alta"
-            risk_class = "high"
-        elif coverage_percent < 90 or missing_days >= 3:
-            risk_level = "Media"
-            risk_class = "medium"
+        # Clasificacion exclusiva de presentacion para hacer comparable el resumen.
+        # Los calculos de cobertura y faltantes se mantienen sin cambios.
+        if coverage_percent <= 30:
+            risk_level = "Critico"
+            risk_class = "critical"
+        elif coverage_percent <= 70:
+            risk_level = "Atencion"
+            risk_class = "attention"
+        elif coverage_percent < 100:
+            risk_level = "Advertencia"
+            risk_class = "warning"
         else:
-            risk_level = "Baja"
-            risk_class = "low"
+            risk_level = "Correcto"
+            risk_class = "ok"
         area_summary.append(
             {
                 "area": area_name,
@@ -7916,7 +7921,7 @@ def control_page(request):
                 "risk_class": risk_class,
             }
         )
-    area_summary.sort(key=lambda item: (-item["missing_days"], item["area"]))
+    area_summary.sort(key=lambda item: (item["coverage_percent"], -item["missing_days"], item["area"]))
 
     return render(
         request,
