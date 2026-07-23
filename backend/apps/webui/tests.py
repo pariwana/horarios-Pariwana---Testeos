@@ -92,11 +92,16 @@ class WebUiGlobalContextSelectorTests(TestCase):
         self._activate_context(self.normal_user)
 
         response = self.client.get(reverse("webui-dashboard"))
+        content = response.content.decode()
 
         self.assertContains(response, "Tenant autorizado")
         self.assertContains(response, "Sede autorizada")
         self.assertContains(response, 'name="tenant_id" value="%s"' % self.tenant.id, html=False)
         self.assertContains(response, 'name="property_id" value="%s"' % self.property.id, html=False)
+        self.assertIn('<div class="topbar-context">', content)
+        self.assertIn('<span class="context-value">Sede autorizada</span>', content)
+        self.assertIn('<div class="topbar-user-actions">', content)
+        self.assertNotIn('class="topbar-user-label"', content)
         self.assertNotContains(response, "Sesion Soporte")
         self.assertNotContains(response, "Sin soporte")
         self.assertNotContains(response, "Tenant no autorizado")
