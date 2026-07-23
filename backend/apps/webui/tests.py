@@ -8,6 +8,7 @@ from django.core.management.base import CommandError
 from django.db.utils import OperationalError
 from django.test import TestCase
 from django.urls import reverse
+from django.utils import timezone
 from django.core.files.uploadedfile import SimpleUploadedFile
 from openpyxl import Workbook
 
@@ -51,6 +52,11 @@ class WebUiGlobalContextSelectorTests(TestCase):
         self.other_tenant = Tenant.objects.create(name="Tenant no autorizado", slug="tenant-no-autorizado")
         self.property = Property.objects.create(tenant=self.tenant, name="Sede autorizada", slug="sede-autorizada")
         self.other_property = Property.objects.create(tenant=self.tenant, name="Sede no autorizada", slug="sede-no-autorizada")
+        self.foreign_property = Property.objects.create(
+            tenant=self.other_tenant,
+            name="Sede de otro tenant",
+            slug="sede-otro-tenant",
+        )
         self.normal_user = User.objects.create_user(email="selector-normal@pariwana.test", password="StrongPass123")
         self.property_admin = User.objects.create_user(email="selector-admin@pariwana.test", password="StrongPass123")
         self.super_admin = User.objects.create_user(
@@ -73,6 +79,14 @@ class WebUiGlobalContextSelectorTests(TestCase):
         if support_session:
             session["support_session_id"] = support_session.id
         session.save()
+
+    def _create_support_session(self, *, property_obj, user=None):
+        return TenantSupportAccessSession.objects.create(
+            tenant=self.tenant,
+            property=property_obj,
+            started_by=user or self.super_admin,
+            reason="Prueba de seguridad",
+        )
 
     def test_normal_user_sees_only_authorized_static_context_without_support(self):
         self._activate_context(self.normal_user)
@@ -147,12 +161,7 @@ class WebUiGlobalContextSelectorTests(TestCase):
         self.assertNotContains(response, "Sin soporte")
 
     def test_super_admin_with_active_support_sees_status_and_management_link(self):
-        support_session = TenantSupportAccessSession.objects.create(
-            tenant=self.tenant,
-            property=self.property,
-            started_by=self.super_admin,
-            reason="Prueba de selector",
-        )
+        support_session = self._create_support_session(property_obj=self.property)
         self._activate_context(self.super_admin, support_session=support_session)
 
         response = self.client.get(reverse("webui-dashboard"))
@@ -162,6 +171,191 @@ class WebUiGlobalContextSelectorTests(TestCase):
         self.assertContains(response, 'href="/app/support/">Gestionar o cerrar</a>', html=False)
         self.assertNotContains(response, "Sesion Soporte")
         self.assertNotContains(response, "Sin soporte")
+
+    def test_super_admin_without_support_can_change_context_normally(self):
+        self._activate_context(self.super_admin)
+
+        response = self.client.post(
+            reverse("webui-context"),
+            {"tenant_id": self.other_tenant.id, "property_id": self.foreign_property.id},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.client.session["ui_tenant_id"], self.other_tenant.id)
+        self.assertEqual(self.client.session["ui_property_id"], self.foreign_property.id)
+        self.assertNotIn("support_session_id", self.client.session)
+
+    def test_active_support_is_preserved_when_context_post_omits_support_id(self):
+        support_session = self._create_support_session(property_obj=self.property)
+        self._activate_context(self.super_admin, support_session=support_session)
+
+        response = self.client.post(
+            reverse("webui-context"),
+            {"tenant_id": self.tenant.id, "property_id": self.property.id},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.client.session["support_session_id"], support_session.id)
+        self.assertEqual(self.client.session["ui_tenant_id"], self.tenant.id)
+        self.assertEqual(self.client.session["ui_property_id"], self.property.id)
+
+    def test_other_own_support_session_does_not_replace_active_session(self):
+        active_session = self._create_support_session(property_obj=self.property)
+        other_session = self._create_support_session(property_obj=self.other_property)
+        self._activate_context(self.super_admin, support_session=active_session)
+
+        response = self.client.post(
+            reverse("webui-context"),
+            {"support_session_id": other_session.id},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.client.session["support_session_id"], active_session.id)
+        self.assertEqual(self.client.session["ui_property_id"], self.property.id)
+
+    def test_support_session_from_other_super_admin_does_not_replace_active_session(self):
+        other_super_admin = User.objects.create_user(
+            email="selector-other-super@pariwana.test",
+            password="StrongPass123",
+            is_super_admin=True,
+        )
+        active_session = self._create_support_session(property_obj=self.property)
+        foreign_session = self._create_support_session(property_obj=self.other_property, user=other_super_admin)
+        self._activate_context(self.super_admin, support_session=active_session)
+
+        response = self.client.post(
+            reverse("webui-context"),
+            {"support_session_id": foreign_session.id},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.client.session["support_session_id"], active_session.id)
+        self.assertEqual(self.client.session["ui_property_id"], self.property.id)
+
+    def test_property_scoped_support_rejects_other_property_without_stop_audit(self):
+        support_session = self._create_support_session(property_obj=self.property)
+        self._activate_context(self.super_admin, support_session=support_session)
+
+        response = self.client.post(
+            reverse("webui-context"),
+            {"tenant_id": self.tenant.id, "property_id": self.other_property.id},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.client.session["support_session_id"], support_session.id)
+        self.assertEqual(self.client.session["ui_property_id"], self.property.id)
+        self.assertFalse(
+            AuditLog.objects.filter(
+                action="support_access_stop",
+                entity_type="TenantSupportAccessSession",
+                entity_id=support_session.id,
+            ).exists()
+        )
+
+    def test_active_support_rejects_other_tenant(self):
+        support_session = self._create_support_session(property_obj=self.property)
+        self._activate_context(self.super_admin, support_session=support_session)
+
+        response = self.client.post(
+            reverse("webui-context"),
+            {"tenant_id": self.other_tenant.id, "property_id": self.foreign_property.id},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.client.session["support_session_id"], support_session.id)
+        self.assertEqual(self.client.session["ui_tenant_id"], self.tenant.id)
+        self.assertEqual(self.client.session["ui_property_id"], self.property.id)
+
+    def test_tenant_wide_support_allows_property_from_same_tenant(self):
+        support_session = self._create_support_session(property_obj=None)
+        self._activate_context(self.super_admin, support_session=support_session)
+
+        response = self.client.post(
+            reverse("webui-context"),
+            {"tenant_id": self.tenant.id, "property_id": self.other_property.id},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.client.session["support_session_id"], support_session.id)
+        self.assertEqual(self.client.session["ui_tenant_id"], self.tenant.id)
+        self.assertEqual(self.client.session["ui_property_id"], self.other_property.id)
+
+    def test_tenant_wide_support_rejects_property_from_other_tenant(self):
+        support_session = self._create_support_session(property_obj=None)
+        self._activate_context(self.super_admin, support_session=support_session)
+
+        response = self.client.post(
+            reverse("webui-context"),
+            {"tenant_id": self.tenant.id, "property_id": self.foreign_property.id},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.client.session["support_session_id"], support_session.id)
+        self.assertEqual(self.client.session["ui_tenant_id"], self.tenant.id)
+        self.assertEqual(self.client.session["ui_property_id"], self.property.id)
+
+    def test_closed_support_reference_is_cleared_and_normal_context_change_is_allowed(self):
+        support_session = self._create_support_session(property_obj=self.property)
+        support_session.ended_at = timezone.now()
+        support_session.ended_by = self.super_admin
+        support_session.end_reason = "Finalizada"
+        support_session.save(update_fields=["ended_at", "ended_by", "end_reason", "updated_at"])
+        self._activate_context(self.super_admin, support_session=support_session)
+
+        response = self.client.post(
+            reverse("webui-context"),
+            {"tenant_id": self.other_tenant.id, "property_id": self.foreign_property.id},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertNotIn("support_session_id", self.client.session)
+        self.assertEqual(self.client.session["ui_tenant_id"], self.other_tenant.id)
+        self.assertEqual(self.client.session["ui_property_id"], self.foreign_property.id)
+
+    def test_missing_support_reference_is_cleared_and_normal_context_change_is_allowed(self):
+        self._activate_context(self.super_admin)
+        browser_session = self.client.session
+        browser_session["support_session_id"] = 999999
+        browser_session.save()
+
+        response = self.client.post(
+            reverse("webui-context"),
+            {"tenant_id": self.other_tenant.id, "property_id": self.foreign_property.id},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertNotIn("support_session_id", self.client.session)
+        self.assertEqual(self.client.session["ui_tenant_id"], self.other_tenant.id)
+        self.assertEqual(self.client.session["ui_property_id"], self.foreign_property.id)
+
+    def test_super_admin_cannot_activate_support_directly_from_context(self):
+        support_session = self._create_support_session(property_obj=self.property)
+        self._activate_context(self.super_admin)
+
+        response = self.client.post(
+            reverse("webui-context"),
+            {"support_session_id": support_session.id},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertNotIn("support_session_id", self.client.session)
+
+    def test_non_super_admin_cannot_activate_support_directly_from_context(self):
+        support_session = self._create_support_session(property_obj=self.property)
+        self._activate_context(self.normal_user)
+
+        response = self.client.post(
+            reverse("webui-context"),
+            {
+                "support_session_id": support_session.id,
+                "tenant_id": self.tenant.id,
+                "property_id": self.other_property.id,
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertNotIn("support_session_id", self.client.session)
+        self.assertEqual(self.client.session["ui_property_id"], self.property.id)
 
     def test_scheduling_uses_the_same_single_context_component(self):
         self._activate_context(self.normal_user)
@@ -416,6 +610,11 @@ class WebUiSupportTests(TestCase):
             password="StrongPass123",
             is_super_admin=True,
         )
+        self.other_super_admin = User.objects.create_user(
+            email="support-other-super-admin@pariwana.test",
+            password="StrongPass123",
+            is_super_admin=True,
+        )
         self.admin = User.objects.create_user(email="support-admin@pariwana.test", password="StrongPass123")
         UserTenantRole.objects.create(user=self.admin, tenant=self.tenant, role=RoleChoices.ADMIN)
         UserPropertyPermission.objects.create(
@@ -430,6 +629,20 @@ class WebUiSupportTests(TestCase):
         session = self.client.session
         session["ui_tenant_id"] = self.tenant.id
         session["ui_property_id"] = self.property.id
+        session.save()
+
+    def _create_active_support(self, *, user=None):
+        return TenantSupportAccessSession.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            started_by=user or self.super_admin,
+            reason="debug",
+        )
+
+    def _activate_support_in_browser(self, support_session):
+        self._activate_super_admin_context()
+        session = self.client.session
+        session["support_session_id"] = support_session.id
         session.save()
 
     def test_super_admin_can_open_support_page_and_menu(self):
@@ -478,16 +691,8 @@ class WebUiSupportTests(TestCase):
         )
 
     def test_super_admin_can_stop_support(self):
-        support_session = TenantSupportAccessSession.objects.create(
-            tenant=self.tenant,
-            property=self.property,
-            started_by=self.super_admin,
-            reason="debug",
-        )
-        self._activate_super_admin_context()
-        session = self.client.session
-        session["support_session_id"] = support_session.id
-        session.save()
+        support_session = self._create_active_support()
+        self._activate_support_in_browser(support_session)
 
         response = self.client.post(
             reverse("webui-support"),
@@ -500,6 +705,8 @@ class WebUiSupportTests(TestCase):
         self.assertEqual(response.status_code, 302)
         support_session.refresh_from_db()
         self.assertIsNotNone(support_session.ended_at)
+        self.assertEqual(support_session.ended_by, self.super_admin)
+        self.assertEqual(support_session.end_reason, "resuelto")
         self.assertNotIn("support_session_id", self.client.session)
         self.assertTrue(
             AuditLog.objects.filter(
@@ -510,6 +717,120 @@ class WebUiSupportTests(TestCase):
                 entity_type="TenantSupportAccessSession",
             ).exists()
         )
+
+    def test_empty_stop_reason_does_not_close_or_audit_support(self):
+        support_session = self._create_active_support()
+        self._activate_support_in_browser(support_session)
+
+        response = self.client.post(
+            reverse("webui-support"),
+            {
+                "action": "stop_support",
+                "session_id": support_session.id,
+                "reason": "",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        support_session.refresh_from_db()
+        self.assertIsNone(support_session.ended_at)
+        self.assertIsNone(support_session.ended_by)
+        self.assertEqual(support_session.end_reason, "")
+        self.assertEqual(self.client.session["support_session_id"], support_session.id)
+        self.assertFalse(
+            AuditLog.objects.filter(
+                action="support_access_stop",
+                entity_type="TenantSupportAccessSession",
+                entity_id=support_session.id,
+            ).exists()
+        )
+
+    def test_whitespace_stop_reason_does_not_close_or_audit_support(self):
+        support_session = self._create_active_support()
+        self._activate_support_in_browser(support_session)
+
+        response = self.client.post(
+            reverse("webui-support"),
+            {
+                "action": "stop_support",
+                "session_id": support_session.id,
+                "reason": "   ",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        support_session.refresh_from_db()
+        self.assertIsNone(support_session.ended_at)
+        self.assertEqual(self.client.session["support_session_id"], support_session.id)
+        self.assertFalse(AuditLog.objects.filter(action="support_access_stop").exists())
+
+    def test_empty_stop_all_reason_does_not_close_any_support_session(self):
+        first_session = self._create_active_support()
+        second_session = self._create_active_support()
+        self._activate_support_in_browser(first_session)
+
+        response = self.client.post(
+            reverse("webui-support"),
+            {"action": "stop_all_support", "reason": "  "},
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            TenantSupportAccessSession.objects.filter(
+                id__in=[first_session.id, second_session.id],
+                ended_at__isnull=True,
+            ).count(),
+            2,
+        )
+        self.assertEqual(self.client.session["support_session_id"], first_session.id)
+        self.assertFalse(AuditLog.objects.filter(action="support_access_stop").exists())
+
+    def test_other_super_admin_cannot_close_support_session(self):
+        support_session = self._create_active_support()
+        self.client.force_login(self.other_super_admin)
+
+        response = self.client.post(
+            reverse("webui-support"),
+            {
+                "action": "stop_support",
+                "session_id": support_session.id,
+                "reason": "Intento ajeno",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        support_session.refresh_from_db()
+        self.assertIsNone(support_session.ended_at)
+        self.assertFalse(AuditLog.objects.filter(action="support_access_stop").exists())
+
+    def test_non_super_admin_cannot_start_or_close_support_directly(self):
+        support_session = self._create_active_support()
+        self.client.force_login(self.admin)
+
+        start_response = self.client.post(
+            reverse("webui-support"),
+            {
+                "action": "start_support",
+                "tenant_id": self.tenant.id,
+                "property_id": self.property.id,
+                "reason": "Intento no autorizado",
+            },
+        )
+        stop_response = self.client.post(
+            reverse("webui-support"),
+            {
+                "action": "stop_support",
+                "session_id": support_session.id,
+                "reason": "Intento no autorizado",
+            },
+        )
+
+        self.assertEqual(start_response.status_code, 200)
+        self.assertEqual(stop_response.status_code, 200)
+        self.assertEqual(TenantSupportAccessSession.objects.count(), 1)
+        support_session.refresh_from_db()
+        self.assertIsNone(support_session.ended_at)
+        self.assertFalse(AuditLog.objects.filter(action__in=["support_access_start", "support_access_stop"]).exists())
 
 
 class WebUiPropertiesTests(TestCase):
