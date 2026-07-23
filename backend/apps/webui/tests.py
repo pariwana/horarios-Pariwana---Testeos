@@ -1516,12 +1516,151 @@ class WebUiSchedulingTests(TestCase):
         self.assertContains(response, "Siguiente ›")
         self.assertContains(response, "asignados")
         self.assertContains(response, "pendientes")
-        self.assertContains(response, "Reporte del equipo")
         self.assertContains(response, "Sin asignar")
         self.assertContains(response, 'class="panel scheduling-bulk-actions" style="margin-bottom: 12px;" hidden')
         self.assertNotContains(response, '<label>Tenant</label>', html=True)
         self.assertContains(response, 'aria-label="Vista movil de asignacion"')
         self.assertContains(response, "Lun")
+        self.assertNotContains(response, "Crear imagen semanal")
+        self.assertNotContains(response, "Imagen semanal de horarios")
+        self.assertNotContains(response, "Reporte del equipo")
+
+    def test_scheduling_share_page_uses_authorized_filters_and_disabled_downloads(self):
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+
+        response = self.client.get(reverse("webui-scheduling-share"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Compartir horarios")
+        self.assertContains(response, "Ver vista previa")
+        self.assertContains(response, 'data-share-image', html=False)
+        self.assertContains(response, 'data-share-pdf', html=False)
+        self.assertContains(response, "disabled")
+        self.assertContains(response, reverse("webui-scheduling-team-report-image-data"))
+        self.assertContains(response, "Compartir horarios")
+
+    def test_team_report_image_data_contains_authorized_report_data(self):
+        afternoon_shift = Shift.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            area=self.area,
+            name="Tarde",
+            buk_code="REC-T",
+            start_time="14:00",
+            end_time="22:00",
+        )
+        extended_morning_shift = Shift.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            area=self.area,
+            name="Manana extendida",
+            buk_code="REC-MX",
+            start_time="06:00",
+            end_time="15:00",
+        )
+        ScheduleAssignment.objects.create(
+            tenant=self.tenant, property=self.property, worker=self.worker,
+            date=date(2026, 7, 20), shift=self.shift,
+        )
+        ScheduleAssignment.objects.create(
+            tenant=self.tenant, property=self.property, worker=self.worker,
+            date=date(2026, 7, 21), special_state=self.state,
+        )
+        ScheduleAssignment.objects.create(
+            tenant=self.tenant, property=self.property, worker=self.worker,
+            date=date(2026, 7, 22), shift=afternoon_shift,
+        )
+        ScheduleAssignment.objects.create(
+            tenant=self.tenant, property=self.property, worker=self.worker,
+            date=date(2026, 7, 23), shift=extended_morning_shift,
+        )
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+
+        response = self.client.get(reverse("webui-scheduling-team-report-image-data"), {
+            "area_id": self.area.id, "date_from": "2026-07-20", "date_to": "2026-07-26",
+        })
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["date_from"], "2026-07-20")
+        self.assertEqual(payload["date_to"], "2026-07-26")
+        self.assertEqual(payload["days"][0]["label"], "Lun")
+        self.assertEqual(payload["rows"][0]["label"], "Luz Mamani")
+        morning = payload["rows"][0]["cells"][0]
+        free = payload["rows"][0]["cells"][1]
+        afternoon = payload["rows"][0]["cells"][2]
+        extended_morning = payload["rows"][0]["cells"][3]
+        pending = payload["rows"][0]["cells"][4]
+        self.assertEqual(morning, {
+            "label": "06:00 - 14:45", "kind": "shift",
+            "background": "#dbeafe", "text_color": "#1e3a8a",
+        })
+        self.assertEqual(afternoon, {
+            "label": "14:00 - 22:00", "kind": "shift",
+            "background": "#dcfce7", "text_color": "#14532d",
+        })
+        self.assertNotEqual(morning["background"], afternoon["background"])
+        self.assertEqual(extended_morning, {
+            "label": "06:00 - 15:00", "kind": "shift",
+            "background": "#cffafe", "text_color": "#155e75",
+        })
+        self.assertNotEqual(morning["background"], extended_morning["background"])
+        self.assertEqual(free, {
+            "label": self.state.name, "kind": "state",
+            "background": "#ffffff", "text_color": "#111827",
+        })
+        self.assertEqual(pending, {
+            "label": "Pendiente", "kind": "pending",
+            "background": "#ffffff", "text_color": "#b91c1c",
+        })
+
+    def test_team_report_image_data_rejects_unauthorized_area(self):
+        other_area = Area.objects.create(tenant=self.tenant, property=self.property, name="Housekeeping")
+        supervisor = User.objects.create_user(email="weekly-image-restricted@pariwana.test", password="StrongPass123")
+        UserTenantRole.objects.create(user=supervisor, tenant=self.tenant, role=RoleChoices.SUPERVISOR)
+        UserPropertyPermission.objects.create(user=supervisor, tenant=self.tenant, property=self.property, can_access=True, can_schedule=True)
+        UserAreaPermission.objects.create(user=supervisor, tenant=self.tenant, property=self.property, area=self.area, can_view=True, can_schedule=True)
+        self.client.force_login(supervisor)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+
+        blocked_area = self.client.get(reverse("webui-scheduling-team-report-image-data"), {"area_id": other_area.id, "date_from": "2026-07-20", "date_to": "2026-07-26"})
+
+        self.assertEqual(blocked_area.status_code, 403)
+
+    def test_team_report_image_data_allows_super_admin_and_excludes_other_areas(self):
+        other_area = Area.objects.create(tenant=self.tenant, property=self.property, name="Housekeeping")
+        other_worker = Worker.objects.create(tenant=self.tenant, property=self.property, area=other_area, document_number="99112233", first_name="Carlos", last_name="Rojas", active=True)
+        super_admin = User.objects.create_user(email="weekly-image-super@pariwana.test", password="StrongPass123", is_super_admin=True)
+        self.client.force_login(super_admin)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+
+        response = self.client.get(reverse("webui-scheduling-team-report-image-data"), {"area_id": other_area.id, "date_from": "2026-07-20", "date_to": "2026-07-26"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["rows"][0]["label"], "Carlos Rojas")
+        self.assertEqual(
+            response.json()["rows"][0]["cells"],
+            [{
+                "label": "Pendiente",
+                "kind": "pending",
+                "background": "#ffffff",
+                "text_color": "#b91c1c",
+            }] * 7,
+        )
 
     def test_scheduling_page_prepares_mobile_day_view_with_daily_counts(self):
         second_worker = Worker.objects.create(
