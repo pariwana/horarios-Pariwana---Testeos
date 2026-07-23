@@ -591,23 +591,61 @@ def logout_page(request):
 @login_required
 @require_http_methods(["POST"])
 def switch_context(request):
+    redirect_target = request.POST.get("next") or "webui-dashboard"
+    submitted_support_session_id = str(request.POST.get("support_session_id", "")).strip()
+
     if request.user.is_super_admin:
-        support_session_id = str(request.POST.get("support_session_id", "")).strip()
-        if support_session_id:
-            support_session = _get_support_session(request.user, support_session_id)
-            if support_session is None:
-                messages.error(request, "Sesion de soporte invalida o inactiva.")
+        stored_support_session_id = request.session.get("support_session_id")
+        support_session = _get_support_session(request.user, stored_support_session_id)
+        if stored_support_session_id and support_session is None:
+            request.session.pop("support_session_id", None)
+
+        if support_session is not None:
+            tenant_id = str(request.POST.get("tenant_id", "")).strip()
+            property_id = str(request.POST.get("property_id", "")).strip()
+            incompatible_request = (
+                bool(submitted_support_session_id)
+                and submitted_support_session_id != str(support_session.id)
+            )
+            incompatible_request = incompatible_request or (
+                bool(tenant_id) and tenant_id != str(support_session.tenant_id)
+            )
+
+            selected_property = None
+            if support_session.property_id:
+                incompatible_request = incompatible_request or (
+                    bool(property_id) and property_id != str(support_session.property_id)
+                )
             else:
-                request.session["support_session_id"] = support_session.id
-                request.session["ui_tenant_id"] = support_session.tenant_id
-                if support_session.property_id:
-                    request.session["ui_property_id"] = support_session.property_id
-                messages.success(request, "Sesion de soporte activada.")
-                return redirect(request.POST.get("next") or "webui-dashboard")
-        else:
-            if "support_session_id" in request.session:
-                del request.session["support_session_id"]
-                messages.success(request, "Sesion de soporte desactivada.")
+                if property_id:
+                    selected_property = (
+                        Property.objects.filter(id=property_id, tenant_id=support_session.tenant_id).first()
+                        if property_id.isdigit()
+                        else None
+                    )
+                    incompatible_request = incompatible_request or selected_property is None
+
+            request.session["support_session_id"] = support_session.id
+            request.session["ui_tenant_id"] = support_session.tenant_id
+            if support_session.property_id:
+                request.session["ui_property_id"] = support_session.property_id
+            elif selected_property is not None and not incompatible_request:
+                request.session["ui_property_id"] = selected_property.id
+            else:
+                stored_property_id = request.session.get("ui_property_id")
+                if not Property.objects.filter(
+                    id=stored_property_id,
+                    tenant_id=support_session.tenant_id,
+                ).exists():
+                    request.session.pop("ui_property_id", None)
+
+            if incompatible_request:
+                messages.error(request, "El contexto no puede salir del alcance de la sesion de soporte activa.")
+            return redirect(redirect_target)
+
+    if submitted_support_session_id:
+        messages.error(request, "Las sesiones de soporte solo pueden activarse desde la pagina de soporte.")
+        return redirect(redirect_target)
 
     tenant_id = request.POST.get("tenant_id")
     property_id = request.POST.get("property_id")
@@ -615,7 +653,7 @@ def switch_context(request):
         request.session["ui_tenant_id"] = int(tenant_id)
     if property_id:
         request.session["ui_property_id"] = int(property_id)
-    return redirect(request.POST.get("next") or "webui-dashboard")
+    return redirect(redirect_target)
 
 
 @login_required
@@ -8134,6 +8172,10 @@ def support_page(request):
             return redirect("webui-support")
 
         if action == "stop_support":
+            reason = str(request.POST.get("reason", "")).strip()
+            if not reason:
+                messages.error(request, "El motivo de cierre es obligatorio.")
+                return redirect("webui-support")
             session_id = str(request.POST.get("session_id", "")).strip()
             session = TenantSupportAccessSession.objects.filter(
                 id=session_id,
@@ -8146,7 +8188,7 @@ def support_page(request):
             TenantSupportService.stop_session(
                 session=session,
                 user=request.user,
-                reason=str(request.POST.get("reason", "")).strip(),
+                reason=reason,
             )
             if str(request.session.get("support_session_id", "")) == str(session.id):
                 request.session.pop("support_session_id", None)
@@ -8154,11 +8196,14 @@ def support_page(request):
             return redirect("webui-support")
 
         if action == "stop_all_support":
+            reason = str(request.POST.get("reason", "")).strip()
+            if not reason:
+                messages.error(request, "El motivo de cierre es obligatorio.")
+                return redirect("webui-support")
             sessions = TenantSupportAccessSession.objects.filter(
                 started_by=request.user,
                 ended_at__isnull=True,
             ).select_related("tenant", "property")
-            reason = str(request.POST.get("reason", "")).strip()
             closed_count = 0
             for session in sessions:
                 TenantSupportService.stop_session(session=session, user=request.user, reason=reason)

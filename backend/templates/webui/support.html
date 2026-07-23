@@ -113,7 +113,7 @@
               {% csrf_token %}
               <input type="hidden" name="action" value="stop_support">
               <input type="hidden" name="session_id" value="{{ item.id }}">
-              <input type="text" name="reason" placeholder="Motivo de cierre">
+              <input type="text" name="reason" placeholder="Motivo de cierre" required>
               <button type="submit">Cerrar</button>
             </form>
           </article>
