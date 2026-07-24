@@ -94,15 +94,14 @@ class WebUiGlobalContextSelectorTests(TestCase):
         response = self.client.get(reverse("webui-dashboard"))
         content = response.content.decode()
 
-        self.assertContains(response, "Tenant autorizado")
         self.assertContains(response, "Sede autorizada")
-        self.assertContains(response, 'name="tenant_id" value="%s"' % self.tenant.id, html=False)
         self.assertContains(response, 'name="property_id" value="%s"' % self.property.id, html=False)
         self.assertIn('<div class="topbar-context">', content)
         self.assertIn('<span class="context-value">Sede autorizada</span>', content)
         self.assertIn('<aside class="sidebar sidebar--single-property" id="app-sidebar">', content)
-        self.assertIn('<div class="topbar-user-actions">', content)
+        self.assertIn('<div class="nav-account">', content)
         self.assertNotIn('class="topbar-user-label"', content)
+        self.assertNotIn('name="tenant_id" value="%s"' % self.tenant.id, content)
         self.assertNotContains(response, "Sesion Soporte")
         self.assertNotContains(response, "Sin soporte")
         self.assertNotContains(response, "Tenant no autorizado")
@@ -135,7 +134,7 @@ class WebUiGlobalContextSelectorTests(TestCase):
         self.assertContains(response, "Segunda sede autorizada")
         self.assertNotContains(response, "Sede no autorizada")
         self.assertContains(response, ">Aplicar<", html=False)
-        self.assertContains(response, 'name="tenant_id" value="%s"' % self.tenant.id, html=False)
+        self.assertNotContains(response, 'name="tenant_id" value="%s"' % self.tenant.id, html=False)
         self.assertNotContains(response, '<aside class="sidebar sidebar--single-property" id="app-sidebar">')
 
     def test_user_with_multiple_authorized_tenants_sees_tenant_selector(self):
@@ -152,18 +151,19 @@ class WebUiGlobalContextSelectorTests(TestCase):
 
         response = self.client.get(reverse("webui-dashboard"))
 
-        self.assertContains(response, '<select name="tenant_id">', html=False)
+        self.assertContains(response, '<label for="tenant-switcher">Cambiar organizacion</label>', html=False)
+        self.assertContains(response, '<select id="tenant-switcher" name="tenant_id"', html=False)
         self.assertContains(response, "Segundo tenant autorizado")
         self.assertNotContains(response, "Tenant no autorizado")
-        self.assertContains(response, ">Aplicar<", html=False)
-        self.assertContains(response, 'name="property_id" value="%s"' % self.property.id, html=False)
+        self.assertNotContains(response, ">Aplicar<", html=False)
+        self.assertContains(response, '<span class="context-value">Sede autorizada</span>', html=False)
 
     def test_super_admin_without_active_support_sees_support_link_only(self):
         self._activate_context(self.super_admin)
 
         response = self.client.get(reverse("webui-dashboard"))
 
-        self.assertContains(response, 'href="/app/support/">Soporte</a>', html=False)
+        self.assertContains(response, "/app/support/")
         self.assertNotContains(response, "Sesion Soporte")
         self.assertNotContains(response, "Sin soporte")
 
@@ -173,9 +173,8 @@ class WebUiGlobalContextSelectorTests(TestCase):
 
         response = self.client.get(reverse("webui-dashboard"))
 
-        self.assertContains(response, "Soporte activo:")
-        self.assertContains(response, "Tenant autorizado · Sede autorizada")
-        self.assertContains(response, 'href="/app/support/">Gestionar o cerrar</a>', html=False)
+        self.assertContains(response, "/app/support/")
+        self.assertNotContains(response, "Soporte activo:")
         self.assertNotContains(response, "Sesion Soporte")
         self.assertNotContains(response, "Sin soporte")
 
@@ -970,7 +969,7 @@ class WebUiNavigationPermissionTests(TestCase):
         self._activate_context()
         response = self.client.get(reverse("webui-dashboard"))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Asignacion")
+        self.assertContains(response, "Asignar")
         self.assertContains(response, "Reporte BUK")
         self.assertContains(response, "reports-only@pariwana.test")
         self.assertNotContains(response, 'href="/app/workers/"')

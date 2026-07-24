@@ -9,9 +9,9 @@
     {% if can_manage_shifts %}
       <div class="page-actions">
         {% if can_import_shifts %}
-          <button type="button" data-open-modal="shift-import-modal">Importar XLSX</button>
+          <button class="desktop-import-action" type="button" data-open-modal="shift-import-modal">Importar XLSX</button>
         {% endif %}
-        <a class="button" href="/app/imports/shifts-template/">Descargar plantilla</a>
+        <a class="button desktop-import-action" href="/app/imports/shifts-template/">Descargar plantilla</a>
         <button class="primary" type="button" data-open-modal="shift-create-modal">+ Nuevo turno</button>
       </div>
     {% endif %}
