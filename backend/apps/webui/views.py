@@ -1754,7 +1754,6 @@ def scheduling_page(request):
     month_prev_value = f"{prev_year:04d}-{prev_month:02d}"
     month_next_value = f"{next_year:04d}-{next_month:02d}"
 
-    area_id = request.GET.get("area_id")
     allowed_area_ids = PermissionService.get_accessible_area_ids(
         request.user,
         tenant,
@@ -1767,7 +1766,27 @@ def scheduling_page(request):
         active=True,
         id__in=allowed_area_ids,
     ).order_by("name")
-    selected_area = area_queryset.filter(id=area_id).first() if area_id else None
+    selected_area_session_key = "scheduling_selected_area_ids"
+    selected_area_scope = f"{tenant.id}:{property_obj.id}"
+    stored_area_ids = request.session.get(selected_area_session_key, {})
+    if not isinstance(stored_area_ids, dict):
+        stored_area_ids = {}
+
+    requested_area_id = str(request.GET.get("area_id", "")).strip()
+    selected_area = area_queryset.filter(id=requested_area_id).first() if requested_area_id else None
+    if selected_area is None:
+        selected_area = area_queryset.filter(id=stored_area_ids.get(selected_area_scope)).first()
+    if selected_area is None:
+        selected_area = area_queryset.first()
+
+    selected_area_id = selected_area.id if selected_area else None
+    if stored_area_ids.get(selected_area_scope) != selected_area_id:
+        if selected_area_id is None:
+            stored_area_ids.pop(selected_area_scope, None)
+        else:
+            stored_area_ids[selected_area_scope] = selected_area_id
+        request.session[selected_area_session_key] = stored_area_ids
+        request.session.modified = True
 
     workers = Worker.objects.select_related("area").filter(
         tenant=tenant,
@@ -1806,7 +1825,7 @@ def scheduling_page(request):
         property=property_obj,
         date__gte=start_date,
         date__lte=end_date,
-        worker__area_id__in=allowed_area_ids,
+        worker__area=selected_area,
     )
     assignment_index = {(item.worker_id, item.date): item for item in assignments}
 
@@ -1973,7 +1992,7 @@ def scheduling_page(request):
             property=property_obj,
         )
         if selected_area:
-            template_queryset = template_queryset.filter(area=selected_area)
+            template_queryset = template_queryset.filter(Q(area=selected_area) | Q(area__isnull=True))
         else:
             template_queryset = template_queryset.filter(area__isnull=True)
         week_pattern_templates = list(template_queryset.filter(active=True).order_by("name", "id"))
@@ -1983,7 +2002,7 @@ def scheduling_page(request):
             property=property_obj,
         )
         if selected_area:
-            range_template_queryset = range_template_queryset.filter(area=selected_area)
+            range_template_queryset = range_template_queryset.filter(Q(area=selected_area) | Q(area__isnull=True))
         else:
             range_template_queryset = range_template_queryset.filter(area__isnull=True)
         range_templates = list(range_template_queryset.filter(active=True).order_by("name", "id"))
@@ -2191,10 +2210,9 @@ def scheduling_page(request):
             "selected_day_assigned_count": selected_day_assigned_count,
             "selected_day_pending_count": selected_day_pending_count,
             "areas": area_queryset,
-            "selected_area_id": selected_area.id if selected_area else None,
-            "show_area_selector": is_tenant_admin or area_queryset.count() > 1,
-            "area_filter_label": "Todas" if is_tenant_admin else "Todas mis áreas",
-            "mobile_area_label": selected_area.name if selected_area else ("Todas las áreas" if is_tenant_admin else "Mis áreas autorizadas"),
+            "selected_area_id": selected_area_id,
+            "show_area_selector": area_queryset.count() > 1,
+            "mobile_area_label": selected_area.name if selected_area else "Sin áreas autorizadas",
             "can_schedule": can_schedule,
             "is_tenant_admin": is_tenant_admin,
             "is_month_closed": is_month_closed,
@@ -2550,6 +2568,38 @@ def scheduling_assign(request):
 
     redirect_url = _build_scheduling_redirect_url(month_value, area_value, worker_query, focus_date)
 
+    allowed_area_ids = PermissionService.get_accessible_area_ids(
+        request.user,
+        tenant,
+        property_obj,
+        action="can_schedule",
+    )
+    selected_area = Area.objects.filter(
+        tenant=tenant,
+        property=property_obj,
+        active=True,
+        id__in=allowed_area_ids,
+        id=area_value,
+    ).first()
+    if selected_area is None:
+        stored_area_ids = request.session.get("scheduling_selected_area_ids", {})
+        selected_area_scope = f"{tenant.id}:{property_obj.id}"
+        if isinstance(stored_area_ids, dict):
+            selected_area = Area.objects.filter(
+                tenant=tenant,
+                property=property_obj,
+                active=True,
+                id__in=allowed_area_ids,
+                id=stored_area_ids.get(selected_area_scope),
+            ).first()
+    if selected_area is None:
+        selected_area = Area.objects.filter(
+            tenant=tenant,
+            property=property_obj,
+            active=True,
+            id__in=allowed_area_ids,
+        ).order_by("name").first()
+
     if not worker_id or not work_date_raw:
         if wants_json:
             return json_error("Debe seleccionar trabajador y fecha.")
@@ -2585,6 +2635,11 @@ def scheduling_assign(request):
             return json_error("Trabajador no encontrado.", status=404)
         messages.error(request, "Trabajador no encontrado.")
         return redirect(redirect_url)
+
+    if selected_area is None or worker.area_id != selected_area.id:
+        if wants_json:
+            return json_error("El trabajador no pertenece al area seleccionada.", status=403)
+        return HttpResponseForbidden("El trabajador no pertenece al area seleccionada.")
 
     if not PermissionService.user_can_area_schedule(request.user, tenant, property_obj, worker.area):
         if wants_json:
