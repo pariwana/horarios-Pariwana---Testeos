@@ -370,7 +370,7 @@ def _context_display_flags(tenant_options, property_options):
     return {
         "show_tenant_selector": show_tenant_selector,
         "show_property_selector": show_property_selector,
-        "show_context_apply": show_tenant_selector or show_property_selector,
+        "show_context_apply": show_property_selector,
     }
 
 
@@ -386,7 +386,7 @@ def _can_nav_module(user, tenant, property_obj, module_key, action=None, roles=N
     return action is None
 
 
-def _build_nav_items(user, tenant, property_obj, current_path="/app/"):
+def _build_nav_items(user, tenant, property_obj, current_path="/app/", can_switch_tenant=False):
     def nav_item(label, url):
         is_active = current_path == url or (
             url != "/app/"
@@ -395,32 +395,28 @@ def _build_nav_items(user, tenant, property_obj, current_path="/app/"):
         )
         return {"label": label, "url": url, "active": is_active}
 
-    items = [nav_item("Dashboard", "/app/")]
-    other_items = []
+    items = [nav_item("Inicio", "/app/")]
+    administration_items = []
     if PermissionService.is_super_admin(user):
-        other_items.append(nav_item("Tenants", "/app/tenants/"))
-        other_items.append(nav_item("Modulos", "/app/modules/"))
-        other_items.append(nav_item("Soporte", "/app/support/"))
-        other_items.append(nav_item("Auditoria global", "/app/audit-global/"))
+        administration_items.append(nav_item("Tenants", "/app/tenants/"))
+        administration_items.append(nav_item("Modulos", "/app/modules/"))
+        administration_items.append(nav_item("Soporte", "/app/support/"))
+        administration_items.append(nav_item("Auditoria global", "/app/audit-global/"))
     if tenant is None:
-        if other_items:
-            items.append({"label": "Otras funciones", "children": other_items, "active": any(i["active"] for i in other_items)})
+        if administration_items:
+            items.append({"label": "Administracion", "children": administration_items, "active": any(i["active"] for i in administration_items)})
         return items
 
     if _can_nav_module(user, tenant, property_obj, "scheduling", "can_schedule"):
-        items.append(nav_item("Asignacion", "/app/scheduling/"))
-    if _can_nav_module(user, tenant, property_obj, "properties", roles=["admin"]):
-        other_items.append(nav_item("Sedes", "/app/properties/"))
-    if _can_nav_module(user, tenant, property_obj, "workers", "can_manage_workers"):
-        items.append(nav_item("Trabajadores", "/app/workers/"))
-    if _can_nav_module(user, tenant, property_obj, "areas", "can_manage_areas"):
-        items.append(nav_item("Areas", "/app/areas/"))
+        items.append(nav_item("Asignar", "/app/scheduling/"))
+    if _can_nav_module(user, tenant, property_obj, "scheduling", "can_access"):
+        items.append(nav_item("Compartir horarios", "/app/scheduling/share/"))
+    if _can_nav_module(user, tenant, property_obj, "control", "can_use_control"):
+        items.append(nav_item("Control 15 dias", "/app/control/"))
     if _can_nav_module(user, tenant, property_obj, "shifts", "can_manage_shifts"):
         items.append(nav_item("Turnos", "/app/shifts/"))
-    if _can_nav_module(user, tenant, property_obj, "special_states", roles=["admin"]):
-        items.append(nav_item("Estados especiales", "/app/special-states/"))
-    if _can_nav_module(user, tenant, property_obj, "users_permissions", "can_manage_users"):
-        items.append(nav_item("Roles y permisos", "/app/users-permissions/"))
+    if _can_nav_module(user, tenant, property_obj, "workers", "can_manage_workers"):
+        items.append(nav_item("Trabajadores", "/app/workers/"))
     if _can_nav_module(user, tenant, property_obj, "excel_import"):
         can_import_workers = property_obj is not None and PermissionService.user_can_property_action(
             user, tenant, property_obj, "can_manage_workers"
@@ -429,24 +425,30 @@ def _build_nav_items(user, tenant, property_obj, current_path="/app/"):
             user, tenant, property_obj, "can_manage_shifts"
         )
         if can_import_workers or can_import_shifts:
-            other_items.append(nav_item("Importaciones", "/app/imports/"))
+            items.append(nav_item("Importar", "/app/imports/"))
+    if _can_nav_module(user, tenant, property_obj, "properties", roles=["admin"]):
+        administration_items.append(nav_item("Sedes", "/app/properties/"))
+    if _can_nav_module(user, tenant, property_obj, "areas", "can_manage_areas"):
+        administration_items.append(nav_item("Areas", "/app/areas/"))
+    if _can_nav_module(user, tenant, property_obj, "special_states", roles=["admin"]):
+        administration_items.append(nav_item("Estados especiales", "/app/special-states/"))
+    if _can_nav_module(user, tenant, property_obj, "users_permissions", "can_manage_users"):
+        administration_items.append(nav_item("Roles y permisos", "/app/users-permissions/"))
     if _can_nav_module(user, tenant, property_obj, "backup", roles=["admin"]):
-        other_items.append(nav_item("Backup JSON", "/app/backup/"))
-    if _can_nav_module(user, tenant, property_obj, "control", "can_use_control"):
-        items.append(nav_item("Control 15 dias", "/app/control/"))
-    if _can_nav_module(user, tenant, property_obj, "scheduling", "can_access"):
-        items.append(nav_item("Compartir horarios", "/app/scheduling/share/"))
+        administration_items.append(nav_item("Backup JSON", "/app/backup/"))
     if _can_nav_module(user, tenant, property_obj, "month_closure", roles=["admin"]):
-        other_items.append(nav_item("Cierre de mes", "/app/month-closure/"))
+        administration_items.append(nav_item("Cierre de mes", "/app/month-closure/"))
     if _can_nav_module(user, tenant, property_obj, "audit", roles=["admin"]):
-        other_items.append(nav_item("Auditoria", "/app/audit/"))
+        administration_items.append(nav_item("Auditoria", "/app/audit/"))
     if (
         _can_nav_module(user, tenant, property_obj, "buk_preview", "can_view_reports")
         or _can_nav_module(user, tenant, property_obj, "buk_preview", "can_export_buk")
     ):
         items.append(nav_item("Reporte BUK", "/app/buk-report/"))
-    if other_items:
-        items.append({"label": "Otras funciones", "children": other_items, "active": any(i["active"] for i in other_items)})
+    if can_switch_tenant:
+        administration_items.append({"label": "Cambiar organizacion", "context_switcher": True, "active": False})
+    if administration_items:
+        items.append({"label": "Administracion", "children": administration_items, "active": any(i["active"] for i in administration_items)})
     return items
 
 
@@ -490,7 +492,7 @@ def _build_context(request, require_property=False):
             "support_sessions": [],
             **_context_display_flags(tenant_options, property_options),
             "context_error": "No hay sede disponible para este usuario en el tenant seleccionado.",
-            "nav_items": _build_nav_items(request.user, selected_tenant, None, request.path),
+            "nav_items": _build_nav_items(request.user, selected_tenant, None, request.path, len(tenant_options) > 1),
         }
 
     if selected_tenant and not request.user.is_super_admin:
@@ -508,7 +510,7 @@ def _build_context(request, require_property=False):
                 "support_sessions": [],
                 **_context_display_flags(tenant_options, property_options),
                 "context_error": "No tienes permisos para operar en este tenant.",
-                "nav_items": _build_nav_items(request.user, selected_tenant, selected_property, request.path),
+                "nav_items": _build_nav_items(request.user, selected_tenant, selected_property, request.path, len(tenant_options) > 1),
             }
 
     if selected_tenant and selected_property:
@@ -527,7 +529,7 @@ def _build_context(request, require_property=False):
                 "support_sessions": [],
                 **_context_display_flags(tenant_options, property_options),
                 "context_error": "No tienes permisos de acceso en esta sede.",
-                "nav_items": _build_nav_items(request.user, selected_tenant, selected_property, request.path),
+                "nav_items": _build_nav_items(request.user, selected_tenant, selected_property, request.path, len(tenant_options) > 1),
             }
 
     support_sessions = []
@@ -547,7 +549,7 @@ def _build_context(request, require_property=False):
         "support_sessions": support_sessions,
         **_context_display_flags(tenant_options, property_options),
         "context_error": "",
-        "nav_items": _build_nav_items(request.user, selected_tenant, selected_property, request.path),
+        "nav_items": _build_nav_items(request.user, selected_tenant, selected_property, request.path, len(tenant_options) > 1),
     }
 
 
@@ -2351,7 +2353,7 @@ def scheduling_share_page(request):
     context = {
         **ctx,
         "selected_property": property_obj,
-        "nav_items": _build_nav_items(request.user, tenant, property_obj, request.path),
+        "nav_items": _build_nav_items(request.user, tenant, property_obj, request.path, len(ctx["tenant_options"]) > 1),
         "areas": areas,
         "default_date_from": monday.isoformat(),
         "default_date_to": (monday + timedelta(days=6)).isoformat(),

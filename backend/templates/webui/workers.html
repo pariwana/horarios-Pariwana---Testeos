@@ -9,9 +9,9 @@
     {% if can_manage_workers %}
       <div class="page-actions">
         {% if can_import_workers %}
-          <button type="button" data-open-modal="worker-import-modal">Importar XLSX</button>
+          <button class="desktop-import-action" type="button" data-open-modal="worker-import-modal">Importar XLSX</button>
         {% endif %}
-        <a class="button" href="/app/imports/workers-template/">Descargar plantilla</a>
+        <a class="button desktop-import-action" href="/app/imports/workers-template/">Descargar plantilla</a>
         <button class="primary" type="button" data-open-modal="worker-create-modal">+ Nuevo trabajador</button>
       </div>
     {% endif %}
