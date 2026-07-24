@@ -118,6 +118,7 @@
       .mobile-menu-toggle { width: 40px; height: 36px; min-width: 40px; padding: 0; border-color: #334155; background: #111827; color: #e5e7eb; display: inline-flex; align-items: center; justify-content: center; flex-direction: column; gap: 4px; }
       .mobile-menu-toggle span { display: block; width: 18px; height: 2px; border-radius: 999px; background: currentColor; }
       .nav { display: none; margin-top: 10px; padding-top: 10px; border-top: 1px solid #1f2937; max-height: calc(100vh - 68px); overflow-y: auto; }
+      .sidebar--single-property .nav { margin-top: 4px; padding-top: 4px; }
       .sidebar.nav-open .nav { display: grid; gap: 4px; }
       .nav a { margin-bottom: 0; white-space: normal; }
       .nav-group { position: relative; margin-bottom: 0; }
@@ -184,7 +185,7 @@
 </head>
 <body>
   <div class="layout">
-    <aside class="sidebar" id="app-sidebar">
+    <aside class="sidebar{% if selected_property and not show_property_selector %} sidebar--single-property{% endif %}" id="app-sidebar">
       <div class="sidebar-header">
         <div class="brand">Pariwana Scheduler</div>
         <button class="mobile-menu-toggle" type="button" aria-label="Abrir menu" aria-expanded="false" aria-controls="main-nav" data-mobile-menu-toggle>
