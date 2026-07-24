@@ -100,6 +100,7 @@ class WebUiGlobalContextSelectorTests(TestCase):
         self.assertContains(response, 'name="property_id" value="%s"' % self.property.id, html=False)
         self.assertIn('<div class="topbar-context">', content)
         self.assertIn('<span class="context-value">Sede autorizada</span>', content)
+        self.assertIn('<aside class="sidebar sidebar--single-property" id="app-sidebar">', content)
         self.assertIn('<div class="topbar-user-actions">', content)
         self.assertNotIn('class="topbar-user-label"', content)
         self.assertNotContains(response, "Sesion Soporte")
@@ -135,6 +136,7 @@ class WebUiGlobalContextSelectorTests(TestCase):
         self.assertNotContains(response, "Sede no autorizada")
         self.assertContains(response, ">Aplicar<", html=False)
         self.assertContains(response, 'name="tenant_id" value="%s"' % self.tenant.id, html=False)
+        self.assertNotContains(response, '<aside class="sidebar sidebar--single-property" id="app-sidebar">')
 
     def test_user_with_multiple_authorized_tenants_sees_tenant_selector(self):
         second_tenant = Tenant.objects.create(name="Segundo tenant autorizado", slug="segundo-tenant")
