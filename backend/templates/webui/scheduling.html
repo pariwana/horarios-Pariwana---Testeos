@@ -730,7 +730,6 @@
         <label>Área</label>
         {% if show_area_selector %}
         <select name="area_id" onchange="this.form.submit()">
-          <option value="">{{ area_filter_label }}</option>
           {% for area in areas %}
             <option value="{{ area.id }}" {% if selected_area_id == area.id %}selected{% endif %}>{{ area.name }}</option>
           {% endfor %}
