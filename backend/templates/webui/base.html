@@ -279,6 +279,21 @@
           {% endif %}
           </form>
         </div>
+        <div class="topbar-user-actions">
+          <div class="topbar-user" title="{{ user.email }}">
+            <div class="topbar-user-name">
+              {% if user.first_name or user.last_name %}
+                {{ user.first_name }} {{ user.last_name }}
+              {% else %}
+                {{ user.email }}
+              {% endif %}
+            </div>
+          </div>
+          <form method="post" action="/app/logout/" class="topbar-logout-form">
+            {% csrf_token %}
+            <button type="submit">Salir</button>
+          </form>
+        </div>
       </div>
 
       {% if messages %}

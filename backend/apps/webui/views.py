@@ -321,7 +321,10 @@ def _area_scopes_from_request(request, properties, current_property=None):
     scopes = {}
     legacy_area_ids = request.POST.getlist("area_ids")
     for property_item in properties:
-        mode = str(request.POST.get(f"area_scope_{property_item.id}", "")).strip()
+        mode_values = request.POST.getlist(f"area_scope_{property_item.id}")
+        mode = str(mode_values[-1]).strip() if mode_values else ""
+        if mode and mode not in {"all", "specific"}:
+            raise ValidationError("Selecciona un alcance de áreas válido.")
         if mode == "specific":
             scopes[property_item.id] = [
                 int(item)
