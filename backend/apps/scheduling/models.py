@@ -52,6 +52,33 @@ class ScheduleAssignment(TimestampedModel):
             raise ValidationError("El estado especial no pertenece a la sede seleccionada.")
 
 
+class ScheduleAssignmentNote(TimestampedModel):
+    """Private operational note for one worker on one property date."""
+
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="schedule_assignment_notes")
+    property = models.ForeignKey(Property, on_delete=models.CASCADE, related_name="schedule_assignment_notes")
+    worker = models.ForeignKey(Worker, on_delete=models.CASCADE, related_name="schedule_assignment_notes")
+    date = models.DateField()
+    note = models.CharField(max_length=250)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="updated_schedule_assignment_notes",
+    )
+
+    class Meta:
+        unique_together = [("worker", "property", "date")]
+        ordering = ["date", "worker__last_name", "worker__first_name"]
+
+    def clean(self):
+        if self.worker.tenant_id != self.tenant_id or self.worker.property_id != self.property_id:
+            raise ValidationError("El trabajador no pertenece al tenant o sede seleccionados.")
+        if self.property.tenant_id != self.tenant_id:
+            raise ValidationError("La sede no pertenece al tenant seleccionado.")
+
+
 class SchedulePatternTemplate(TimestampedModel):
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name="schedule_pattern_templates")
     property = models.ForeignKey(Property, on_delete=models.CASCADE, related_name="schedule_pattern_templates")

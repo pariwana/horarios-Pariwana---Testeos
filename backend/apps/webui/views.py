@@ -58,7 +58,7 @@ from apps.users.services import PROPERTY_PERMISSION_KEYS, PermissionService, Rol
 from apps.workers.models import Area, Shift, Worker
 from apps.webui.forms import AreaForm, PropertyForm, ShiftForm, SpecialStateForm, TenantForm, WorkerForm
 from apps.month_closure.services import MonthClosureService
-from apps.scheduling.models import ScheduleAssignment, SchedulePatternTemplate, ScheduleRangeTemplate
+from apps.scheduling.models import ScheduleAssignment, ScheduleAssignmentNote, SchedulePatternTemplate, ScheduleRangeTemplate
 from apps.scheduling.services import ScheduleAssignmentService
 from apps.workers.models import SpecialState
 
@@ -1926,6 +1926,14 @@ def scheduling_page(request):
         worker__area=selected_area,
     )
     assignment_index = {(item.worker_id, item.date): item for item in assignments}
+    notes = ScheduleAssignmentNote.objects.filter(
+        tenant=tenant,
+        property=property_obj,
+        date__gte=start_date,
+        date__lte=end_date,
+        worker__area=selected_area,
+    )
+    note_index = {(item.worker_id, item.date): item for item in notes}
 
     states = list(
         SpecialState.objects.filter(tenant=tenant, property=property_obj, active=True).order_by("name")
@@ -1979,6 +1987,7 @@ def scheduling_page(request):
         )
         for day_meta in days:
             assignment = assignment_index.get((worker.id, day_meta["date"]))
+            assignment_note = note_index.get((worker.id, day_meta["date"]))
             selected_value = ""
             code = ""
             is_night = False
@@ -2031,6 +2040,8 @@ def scheduling_page(request):
                     "editable": is_editable,
                     "shift_options": area_shifts,
                     "state_options": states,
+                    "note_text": assignment_note.note if assignment_note else "",
+                    "has_note": bool(assignment_note),
                 }
             )
         mobile_weeks = []
@@ -2850,6 +2861,75 @@ def scheduling_assign(request):
             edited_date=work_date.isoformat(),
         )
     )
+
+
+@login_required
+@require_http_methods(["POST"])
+def scheduling_note(request):
+    wants_json = (
+        request.headers.get("x-requested-with") == "XMLHttpRequest"
+        or "application/json" in request.headers.get("accept", "").lower()
+    )
+
+    def respond(message, *, status=200, note_text=""):
+        if wants_json:
+            return JsonResponse({"ok": status < 400, "message": message, "note_text": note_text}, status=status)
+        if status >= 400:
+            messages.error(request, message)
+        else:
+            messages.success(request, message)
+        return redirect("webui-scheduling")
+
+    ctx = _build_context(request, require_property=True)
+    if ctx.get("context_error"):
+        return respond(ctx["context_error"], status=400)
+    tenant = ctx["selected_tenant"]
+    property_obj = ctx["selected_property"]
+    if not PermissionService.user_can_module(request.user, tenant, "scheduling"):
+        return respond("Modulo desactivado: scheduling.", status=403)
+    if not PermissionService.user_can_property_action(request.user, tenant, property_obj, "can_schedule"):
+        return respond("No tienes permisos para asignar en esta sede.", status=403)
+
+    worker_id = request.POST.get("worker_id")
+    work_date_raw = str(request.POST.get("work_date", "")).strip()
+    note_text = str(request.POST.get("note", "")).strip()
+    if not worker_id or not work_date_raw:
+        return respond("Debe seleccionar trabajador y fecha.", status=400)
+    if len(note_text) > 250:
+        return respond("La nota no puede superar los 250 caracteres.", status=400)
+    try:
+        work_date = date.fromisoformat(work_date_raw)
+    except ValueError:
+        return respond("Fecha invalida.", status=400)
+    if MonthClosureService.is_closed(
+        tenant=tenant, property_obj=property_obj, year=work_date.year, month=work_date.month
+    ):
+        return respond("El mes esta cerrado para esta sede.", status=409)
+
+    worker = Worker.objects.select_related("area").filter(
+        id=worker_id, tenant=tenant, property=property_obj
+    ).first()
+    if worker is None:
+        return respond("Trabajador no encontrado.", status=404)
+    if not PermissionService.user_can_area_schedule(request.user, tenant, property_obj, worker.area):
+        return respond("No tienes permisos para asignar en esta area.", status=403)
+
+    with transaction.atomic():
+        if not note_text:
+            note = ScheduleAssignmentNote.objects.select_for_update().filter(
+                tenant=tenant, property=property_obj, worker=worker, date=work_date
+            ).first()
+            if note is not None:
+                note.delete()
+            return respond("Nota eliminada.", note_text="")
+        ScheduleAssignmentNote.objects.update_or_create(
+            tenant=tenant,
+            property=property_obj,
+            worker=worker,
+            date=work_date,
+            defaults={"note": note_text, "updated_by": request.user},
+        )
+    return respond("Nota guardada.", note_text=note_text)
 
 
 @login_required
