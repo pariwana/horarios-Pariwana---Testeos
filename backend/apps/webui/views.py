@@ -9037,6 +9037,17 @@ def users_permissions_page(request):
         area_map.setdefault(item.user_id, set()).add(item.area_id)
 
     property_names_by_id = {item.id: item.name for item in tenant_properties}
+    area_names_by_id = {item.id: item.name for item in areas}
+    permission_labels = (
+        ("can_schedule", "Horarios"),
+        ("can_export_buk", "BUK"),
+        ("can_manage_workers", "Trabajadores"),
+        ("can_manage_shifts", "Turnos"),
+        ("can_manage_areas", "Áreas"),
+        ("can_manage_users", "Usuarios"),
+        ("can_view_reports", "Reportes"),
+        ("can_use_control", "Control"),
+    )
     rows = []
     for tenant_role in role_map.values():
         role_profile_name = tenant_role.role_profile.name if tenant_role.role_profile_id else ""
@@ -9056,6 +9067,15 @@ def users_permissions_page(request):
             current_permission = _property_permission_object_from_payload(tenant_role.property_permissions_template)
         elif current_permission is None:
             current_permission = _property_permission_object_from_payload({})
+        selected_area_ids = area_map.get(tenant_role.user_id, set())
+        selected_area_names = [
+            area_names_by_id[area_id]
+            for area_id in sorted(selected_area_ids, key=lambda item: area_names_by_id.get(item, ""))
+            if area_id in area_names_by_id
+        ]
+        permission_names = [
+            label for key, label in permission_labels if getattr(current_permission, key, False)
+        ]
         rows.append(
             {
                 "user": tenant_role.user,
@@ -9067,7 +9087,9 @@ def users_permissions_page(request):
                 "selected_property_ids": selected_property_ids,
                 "selected_property_names": selected_property_names,
                 "permission": current_permission,
-                "selected_area_ids": area_map.get(tenant_role.user_id, set()),
+                "permission_names": permission_names,
+                "selected_area_ids": selected_area_ids,
+                "selected_area_names": selected_area_names,
             }
         )
     rows.sort(key=lambda item: item["user"].email)
