@@ -18,6 +18,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.views import redirect_to_login
 from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Max, Min, Q
 from django.db.models.deletion import ProtectedError
@@ -53,7 +54,7 @@ from apps.modules.services import ModuleActivationService
 from apps.tenants.models import Property, Tenant, TenantStatus, TenantSupportAccessSession
 from apps.tenants.services import TenantSupportService
 from apps.users.models import RoleChoices, RoleProfile, User, UserAreaPermission, UserPropertyPermission, UserTenantRole
-from apps.users.services import PROPERTY_PERMISSION_KEYS, PermissionService, RoleProfileService
+from apps.users.services import PROPERTY_PERMISSION_KEYS, PermissionService, RoleProfileService, UserAccessService
 from apps.workers.models import Area, Shift, Worker
 from apps.webui.forms import AreaForm, PropertyForm, ShiftForm, SpecialStateForm, TenantForm, WorkerForm
 from apps.month_closure.services import MonthClosureService
@@ -272,41 +273,6 @@ def _property_permission_object_from_payload(payload):
     return SimpleNamespace(**normalized)
 
 
-def _apply_role_profile_defaults(request, role_profile):
-    permissions = _property_permission_payload_from_request(request)
-    if bool(request.POST.get("apply_role_profile_defaults")):
-        permissions.update(RoleProfileService.permission_defaults_for_profile(role_profile))
-    return permissions
-
-
-def _selected_properties_from_request(request, tenant, current_property, role):
-    all_properties_access = bool(request.POST.get("all_properties_access"))
-    tenant_properties = Property.objects.filter(tenant=tenant).order_by("name")
-    if role not in {RoleChoices.ADMIN, RoleChoices.OPERATOR}:
-        return False, [current_property]
-    if all_properties_access:
-        return True, list(tenant_properties)
-    selected_ids = [int(item) for item in request.POST.getlist("property_ids") if str(item).isdigit()]
-    properties = list(tenant_properties.filter(id__in=selected_ids))
-    if not properties:
-        properties = [current_property]
-    return False, properties
-
-
-def _sync_user_property_permissions(*, user, tenant, properties, permission_payload, all_properties_access):
-    selected_ids = [item.id for item in properties]
-    for item in properties:
-        UserPropertyPermission.objects.update_or_create(
-            user=user,
-            tenant=tenant,
-            property=item,
-            defaults=permission_payload,
-        )
-    if not all_properties_access:
-        UserPropertyPermission.objects.filter(user=user, tenant=tenant).exclude(property_id__in=selected_ids).delete()
-        UserAreaPermission.objects.filter(user=user, tenant=tenant).exclude(property_id__in=selected_ids).delete()
-
-
 def _get_exclusive_tenant_user(*, requester, tenant, user_id):
     tenant_role = (
         UserTenantRole.objects.select_related("user")
@@ -315,6 +281,27 @@ def _get_exclusive_tenant_user(*, requester, tenant, user_id):
     )
     if tenant_role is None:
         return None, "Usuario no encontrado en este tenant."
+    if not PermissionService.is_super_admin(requester):
+        requester_property_ids = set(
+            PermissionService.get_accessible_property_ids(
+                requester,
+                tenant,
+                action="can_manage_users",
+            )
+        )
+        target_property_ids = (
+            set(Property.objects.filter(tenant=tenant).values_list("id", flat=True))
+            if tenant_role.all_properties_access
+            else set(
+                UserPropertyPermission.objects.filter(
+                    user=tenant_role.user,
+                    tenant=tenant,
+                    can_access=True,
+                ).values_list("property_id", flat=True)
+            )
+        )
+        if not target_property_ids.issubset(requester_property_ids):
+            return None, "No puedes gestionar un usuario con sedes fuera de tu alcance."
     if (
         not PermissionService.is_super_admin(requester)
         and UserTenantRole.objects.filter(user=tenant_role.user).exclude(tenant=tenant).exists()
@@ -328,6 +315,109 @@ def _get_role_profile_from_request(request, tenant):
     if not role_profile_id.isdigit():
         return None
     return RoleProfile.objects.filter(tenant=tenant, id=int(role_profile_id), active=True).first()
+
+
+def _area_scopes_from_request(request, properties, current_property=None):
+    scopes = {}
+    legacy_area_ids = request.POST.getlist("area_ids")
+    for property_item in properties:
+        mode = str(request.POST.get(f"area_scope_{property_item.id}", "")).strip()
+        if mode == "specific":
+            scopes[property_item.id] = [
+                int(item)
+                for item in request.POST.getlist(f"area_ids_{property_item.id}")
+                if str(item).isdigit()
+            ]
+        elif (
+            not mode
+            and current_property is not None
+            and property_item.id == current_property.id
+            and legacy_area_ids
+        ):
+            scopes[property_item.id] = [int(item) for item in legacy_area_ids if str(item).isdigit()]
+        else:
+            scopes[property_item.id] = None
+    return scopes
+
+
+def _role_profile_for_user_request(request, tenant):
+    profile = _get_role_profile_from_request(request, tenant)
+    if profile is not None:
+        return profile
+    legacy_role = str(request.POST.get("role", "")).strip()
+    if legacy_role in {RoleChoices.ADMIN, RoleChoices.OPERATOR, RoleChoices.SUPERVISOR}:
+        RoleProfileService.ensure_defaults(tenant)
+        return RoleProfile.objects.filter(
+            tenant=tenant,
+            active=True,
+            is_system=True,
+            base_role=legacy_role,
+        ).first()
+    return None
+
+
+def _save_user_access_from_request(*, request, tenant, current_property, target_user=None):
+    creating = target_user is None
+    role_profile = _role_profile_for_user_request(request, tenant)
+    property_ids = [int(item) for item in request.POST.getlist("property_ids") if str(item).isdigit()]
+    if not property_ids and request.POST.get("all_properties_access"):
+        property_ids = list(Property.objects.filter(tenant=tenant).values_list("id", flat=True))
+    if not property_ids and request.POST.get("action") in {"create_user", "update_property_permissions"}:
+        property_ids = [current_property.id]
+    selected_properties = list(Property.objects.filter(tenant=tenant, id__in=property_ids))
+    area_scopes = _area_scopes_from_request(request, selected_properties, current_property)
+
+    permission_payload = _property_permission_payload_from_request(request)
+    if request.POST.get("apply_role_profile_defaults") or (
+        not request.POST.get("permissions_present")
+        and not any(key in request.POST for key in PROPERTY_PERMISSION_KEYS)
+    ):
+        permission_payload = RoleProfileService.permission_defaults_for_profile(role_profile)
+
+    with transaction.atomic():
+        if creating:
+            email = str(request.POST.get("email", "")).strip().lower()
+            password = str(request.POST.get("password", "")).strip()
+            if not email:
+                raise ValidationError("El correo es obligatorio.")
+            validate_email(email)
+            if User.objects.filter(email=email).exists():
+                raise ValidationError("Ya existe un usuario con ese correo. Edítalo desde el listado.")
+            if not password:
+                raise ValidationError("La contraseña es obligatoria para nuevos usuarios.")
+            target_user = User(
+                email=email,
+                first_name=str(request.POST.get("first_name", "")).strip(),
+                last_name=str(request.POST.get("last_name", "")).strip(),
+                is_active=True,
+            )
+            validate_password(password, target_user)
+            target_user.set_password(password)
+            target_user.save()
+            before_snapshot = {}
+        else:
+            before_snapshot = UserAccessService.snapshot(user=target_user, tenant=tenant)
+            target_user.first_name = str(request.POST.get("first_name", "")).strip()
+            target_user.last_name = str(request.POST.get("last_name", "")).strip()
+            target_user.save(update_fields=["first_name", "last_name", "updated_at"])
+
+        UserAccessService.sync(
+            user=target_user,
+            tenant=tenant,
+            role_profile=role_profile,
+            property_ids=property_ids,
+            permission_payload=permission_payload,
+            area_scopes=area_scopes,
+            actor=request.user,
+            audit_property=current_property,
+            before_snapshot=before_snapshot,
+            allowed_property_ids=PermissionService.get_accessible_property_ids(
+                request.user,
+                tenant,
+                action="can_manage_users",
+            ),
+        )
+    return target_user
 
 
 def _get_support_session(user, support_session_id):
@@ -8575,6 +8665,153 @@ def properties_page(request):
 
 @login_required
 @require_http_methods(["GET", "POST"])
+def user_permissions_form_page(request, user_id=None):
+    ctx = _build_context(request, require_property=True)
+    if ctx.get("context_error"):
+        return render(request, "webui/user_permissions_form.html", {**ctx, "form_error": ctx["context_error"]})
+
+    tenant = ctx["selected_tenant"]
+    property_obj = ctx["selected_property"]
+    if (
+        not PermissionService.user_can_property_action(request.user, tenant, property_obj, "can_manage_users")
+        or not PermissionService.user_can_module(request.user, tenant, "users_permissions")
+        or not PermissionService.user_can_property_action(request.user, tenant, property_obj, "can_access")
+    ):
+        return HttpResponseForbidden("No tienes permiso para gestionar usuarios en esta sede.")
+
+    target_user = None
+    if user_id is not None:
+        target_user, target_error = _get_exclusive_tenant_user(
+            requester=request.user,
+            tenant=tenant,
+            user_id=user_id,
+        )
+        if target_user is None:
+            messages.error(request, target_error)
+            return redirect("webui-users-permissions")
+        if target_user.is_super_admin:
+            messages.error(request, "No se puede editar un Super Administrador desde esta pantalla.")
+            return redirect("webui-users-permissions")
+
+    role_profiles = list(RoleProfileService.get_active_profiles(tenant))
+    if request.method == "POST":
+        try:
+            _save_user_access_from_request(
+                request=request,
+                tenant=tenant,
+                current_property=property_obj,
+                target_user=target_user,
+            )
+        except ValidationError as exc:
+            messages.error(request, " ".join(exc.messages))
+        else:
+            messages.success(
+                request,
+                "Usuario creado con un alcance coherente." if target_user is None else "Usuario y permisos actualizados.",
+            )
+            return redirect("webui-users-permissions")
+
+    manageable_property_ids = PermissionService.get_accessible_property_ids(
+        request.user,
+        tenant,
+        action="can_manage_users",
+    )
+    tenant_properties = list(
+        Property.objects.filter(
+            tenant=tenant,
+            id__in=manageable_property_ids,
+        ).order_by("name")
+    )
+    areas_by_property = {
+        property_item.id: list(
+            Area.objects.filter(tenant=tenant, property=property_item, active=True).order_by("name")
+        )
+        for property_item in tenant_properties
+    }
+    assignment = None
+    selected_property_ids = {property_obj.id}
+    selected_area_ids_by_property = {}
+    permission_payload = {}
+    selected_role_profile_id = None
+
+    if target_user is not None:
+        assignment = UserTenantRole.objects.filter(user=target_user, tenant=tenant).first()
+        property_permissions = list(
+            UserPropertyPermission.objects.filter(user=target_user, tenant=tenant).order_by("property__name")
+        )
+        selected_property_ids = (
+            {item.id for item in tenant_properties}
+            if assignment and assignment.all_properties_access
+            else {item.property_id for item in property_permissions if item.can_access}
+        )
+        if property_permissions:
+            permission_payload = {
+                key: getattr(property_permissions[0], key)
+                for key in PROPERTY_PERMISSION_KEYS
+            }
+        elif assignment:
+            permission_payload = RoleProfileService.normalize_permissions(
+                assignment.property_permissions_template
+            )
+        selected_role_profile_id = assignment.role_profile_id if assignment else None
+        for item in UserAreaPermission.objects.filter(user=target_user, tenant=tenant):
+            selected_area_ids_by_property.setdefault(item.property_id, set()).add(item.area_id)
+    elif role_profiles:
+        selected_role_profile_id = role_profiles[0].id
+        permission_payload = RoleProfileService.permission_defaults_for_profile(role_profiles[0])
+
+    if request.method == "POST":
+        posted_property_ids = {
+            int(item) for item in request.POST.getlist("property_ids") if str(item).isdigit()
+        }
+        selected_property_ids = posted_property_ids
+        posted_profile_id = str(request.POST.get("role_profile_id", "")).strip()
+        if posted_profile_id.isdigit():
+            selected_role_profile_id = int(posted_profile_id)
+        permission_payload = _property_permission_payload_from_request(request)
+        selected_area_ids_by_property = {
+            item.id: {
+                int(area_id)
+                for area_id in request.POST.getlist(f"area_ids_{item.id}")
+                if str(area_id).isdigit()
+            }
+            for item in tenant_properties
+            if request.POST.get(f"area_scope_{item.id}") == "specific"
+        }
+
+    property_cards = [
+        {
+            "property": item,
+            "areas": areas_by_property[item.id],
+            "selected": item.id in selected_property_ids,
+            "scope_mode": "specific" if item.id in selected_area_ids_by_property else "all",
+            "selected_area_ids": selected_area_ids_by_property.get(item.id, set()),
+        }
+        for item in tenant_properties
+    ]
+    role_profile_defaults = {
+        str(profile.id): RoleProfileService.permission_defaults_for_profile(profile)
+        for profile in role_profiles
+    }
+    return render(
+        request,
+        "webui/user_permissions_form.html",
+        {
+            **ctx,
+            "target_user": target_user,
+            "assignment": assignment,
+            "role_profiles": role_profiles,
+            "selected_role_profile_id": selected_role_profile_id,
+            "permission_payload": SimpleNamespace(**RoleProfileService.normalize_permissions(permission_payload)),
+            "permission_keys": PROPERTY_PERMISSION_KEYS,
+            "property_cards": property_cards,
+            "role_profile_defaults": role_profile_defaults,
+        },
+    )
+
+
+@login_required
+@require_http_methods(["GET", "POST"])
 def users_permissions_page(request):
     ctx = _build_context(request, require_property=True)
     if ctx.get("context_error"):
@@ -8610,6 +8847,39 @@ def users_permissions_page(request):
     if request.method == "POST":
         action = str(request.POST.get("action", "")).strip()
 
+        if action in {"create_user", "update_property_permissions"}:
+            target_user = None
+            if action == "update_property_permissions":
+                user_id = str(request.POST.get("user_id", "")).strip()
+                if not user_id.isdigit():
+                    messages.error(request, "Usuario inválido.")
+                    return redirect("webui-users-permissions")
+                target_user, target_error = _get_exclusive_tenant_user(
+                    requester=request.user,
+                    tenant=tenant,
+                    user_id=int(user_id),
+                )
+                if target_user is None:
+                    messages.error(request, target_error)
+                    return redirect("webui-users-permissions")
+            try:
+                _save_user_access_from_request(
+                    request=request,
+                    tenant=tenant,
+                    current_property=property_obj,
+                    target_user=target_user,
+                )
+            except ValidationError as exc:
+                messages.error(request, " ".join(exc.messages))
+            else:
+                messages.success(
+                    request,
+                    "Usuario guardado con permisos coherentes."
+                    if target_user is None
+                    else "Usuario y permisos actualizados.",
+                )
+            return redirect("webui-users-permissions")
+
         if action == "create_role_profile":
             name = str(request.POST.get("name", "")).strip()
             code = slugify(str(request.POST.get("code", "")).strip() or name)
@@ -8619,29 +8889,30 @@ def users_permissions_page(request):
                 return redirect("webui-users-permissions")
             permissions = _property_permission_payload_from_request(request)
             try:
-                profile = RoleProfile.objects.create(
-                    tenant=tenant,
-                    code=code,
-                    name=name,
-                    base_role=base_role,
-                    description=str(request.POST.get("description", "")).strip(),
-                    permissions=RoleProfileService.normalize_permissions(permissions),
-                    is_system=False,
-                    active=True,
-                )
+                with transaction.atomic():
+                    profile = RoleProfile.objects.create(
+                        tenant=tenant,
+                        code=code,
+                        name=name,
+                        base_role=base_role,
+                        description=str(request.POST.get("description", "")).strip(),
+                        permissions=RoleProfileService.normalize_permissions(permissions),
+                        is_system=False,
+                        active=True,
+                    )
+                    AuditService.log(
+                        tenant=tenant,
+                        property_obj=property_obj,
+                        user=request.user,
+                        action="create",
+                        entity_type="RoleProfile",
+                        entity_id=profile.id,
+                        before={},
+                        after=_audit_snapshot(profile, ["code", "name", "base_role", "permissions", "active"]),
+                    )
             except IntegrityError:
                 messages.error(request, "Ya existe un rol con ese codigo en este tenant.")
             else:
-                AuditService.log(
-                    tenant=tenant,
-                    property_obj=property_obj,
-                    user=request.user,
-                    action="create",
-                    entity_type="RoleProfile",
-                    entity_id=profile.id,
-                    before={},
-                    after=_audit_snapshot(profile, ["code", "name", "base_role", "permissions", "active"]),
-                )
                 messages.success(request, "Rol creado.")
             return redirect("webui-users-permissions")
 
@@ -8656,18 +8927,19 @@ def users_permissions_page(request):
                 if profile.is_system:
                     messages.error(request, "Los roles base del sistema no se pueden desactivar.")
                     return redirect("webui-users-permissions")
-                profile.active = False
-                profile.save(update_fields=["active", "updated_at"])
-                AuditService.log(
-                    tenant=tenant,
-                    property_obj=property_obj,
-                    user=request.user,
-                    action="delete",
-                    entity_type="RoleProfile",
-                    entity_id=profile.id,
-                    before=before,
-                    after=_audit_snapshot(profile, ["code", "name", "base_role", "permissions", "active"]),
-                )
+                with transaction.atomic():
+                    profile.active = False
+                    profile.save(update_fields=["active", "updated_at"])
+                    AuditService.log(
+                        tenant=tenant,
+                        property_obj=property_obj,
+                        user=request.user,
+                        action="delete",
+                        entity_type="RoleProfile",
+                        entity_id=profile.id,
+                        before=before,
+                        after=_audit_snapshot(profile, ["code", "name", "base_role", "permissions", "active"]),
+                    )
                 messages.success(request, "Rol desactivado.")
                 return redirect("webui-users-permissions")
 
@@ -8680,175 +8952,19 @@ def users_permissions_page(request):
             if not profile.name:
                 messages.error(request, "El nombre del rol es obligatorio.")
                 return redirect("webui-users-permissions")
-            profile.save()
-            AuditService.log(
-                tenant=tenant,
-                property_obj=property_obj,
-                user=request.user,
-                action="update",
-                entity_type="RoleProfile",
-                entity_id=profile.id,
-                before=before,
-                after=_audit_snapshot(profile, ["code", "name", "base_role", "permissions", "active"]),
-            )
+            with transaction.atomic():
+                profile.save()
+                AuditService.log(
+                    tenant=tenant,
+                    property_obj=property_obj,
+                    user=request.user,
+                    action="update",
+                    entity_type="RoleProfile",
+                    entity_id=profile.id,
+                    before=before,
+                    after=_audit_snapshot(profile, ["code", "name", "base_role", "permissions", "active"]),
+                )
             messages.success(request, "Rol actualizado.")
-            return redirect("webui-users-permissions")
-
-        if action == "create_user":
-            email = str(request.POST.get("email", "")).strip().lower()
-            password = str(request.POST.get("password", "")).strip()
-            first_name = str(request.POST.get("first_name", "")).strip()
-            last_name = str(request.POST.get("last_name", "")).strip()
-            role = str(request.POST.get("role", "")).strip()
-            role_profile = _get_role_profile_from_request(request, tenant)
-            if role_profile is not None:
-                role = role_profile.base_role
-
-            if not email or not role:
-                messages.error(request, "Email y tipo de usuario son obligatorios.")
-                return redirect("webui-users-permissions")
-            if role not in {"admin", "operator", "supervisor"}:
-                messages.error(request, "Tipo de usuario invalido.")
-                return redirect("webui-users-permissions")
-
-            user, created = User.objects.get_or_create(
-                email=email,
-                defaults={
-                    "first_name": first_name,
-                    "last_name": last_name,
-                    "is_active": True,
-                },
-            )
-            if created:
-                if not password:
-                    messages.error(request, "La contrasena es obligatoria para nuevos usuarios.")
-                    user.delete()
-                    return redirect("webui-users-permissions")
-                user.set_password(password)
-            else:
-                if first_name:
-                    user.first_name = first_name
-                if last_name:
-                    user.last_name = last_name
-                if password:
-                    user.set_password(password)
-            user.save()
-
-            permission_payload = _apply_role_profile_defaults(request, role_profile)
-            all_properties_access, selected_properties = _selected_properties_from_request(
-                request,
-                tenant,
-                property_obj,
-                role,
-            )
-            UserTenantRole.objects.update_or_create(
-                user=user,
-                tenant=tenant,
-                defaults={
-                    "role": role,
-                    "role_profile": role_profile,
-                    "all_properties_access": all_properties_access,
-                    "property_permissions_template": RoleProfileService.normalize_permissions(permission_payload),
-                },
-            )
-            _sync_user_property_permissions(
-                user=user,
-                tenant=tenant,
-                properties=selected_properties,
-                permission_payload=permission_payload,
-                all_properties_access=all_properties_access,
-            )
-            selected_area_ids = [int(x) for x in request.POST.getlist("area_ids") if str(x).isdigit()]
-            valid_areas = Area.objects.filter(tenant=tenant, property=property_obj, id__in=selected_area_ids)
-            for area in valid_areas:
-                UserAreaPermission.objects.update_or_create(
-                    user=user,
-                    tenant=tenant,
-                    property=property_obj,
-                    area=area,
-                    defaults={"can_view": True, "can_schedule": True},
-                )
-
-            messages.success(request, "Usuario guardado con permisos.")
-            return redirect("webui-users-permissions")
-
-        if action == "update_property_permissions":
-            user_id = str(request.POST.get("user_id", "")).strip()
-            if not user_id.isdigit():
-                messages.error(request, "Usuario invalido.")
-                return redirect("webui-users-permissions")
-            target_user, target_error = _get_exclusive_tenant_user(
-                requester=request.user,
-                tenant=tenant,
-                user_id=int(user_id),
-            )
-            if target_user is None:
-                messages.error(request, target_error)
-                return redirect("webui-users-permissions")
-
-            before_user = _audit_snapshot(target_user, ["email", "first_name", "last_name", "is_active", "is_super_admin"])
-            target_user.first_name = str(request.POST.get("first_name", "")).strip()
-            target_user.last_name = str(request.POST.get("last_name", "")).strip()
-            target_user.save(update_fields=["first_name", "last_name", "updated_at"])
-
-            role = str(request.POST.get("role", "")).strip()
-            role_profile = _get_role_profile_from_request(request, tenant)
-            if role_profile is not None:
-                role = role_profile.base_role
-            permission_payload = _apply_role_profile_defaults(request, role_profile)
-            if role not in {"admin", "operator", "supervisor"}:
-                existing_role = UserTenantRole.objects.filter(user=target_user, tenant=tenant).first()
-                role = existing_role.role if existing_role else ""
-            all_properties_access, selected_properties = _selected_properties_from_request(
-                request,
-                tenant=tenant,
-                current_property=property_obj,
-                role=role,
-            )
-            if role in {"admin", "operator", "supervisor"}:
-                UserTenantRole.objects.update_or_create(
-                    user=target_user,
-                    tenant=tenant,
-                    defaults={
-                        "role": role,
-                        "role_profile": role_profile,
-                        "all_properties_access": all_properties_access,
-                        "property_permissions_template": RoleProfileService.normalize_permissions(permission_payload),
-                    },
-                )
-            _sync_user_property_permissions(
-                user=target_user,
-                tenant=tenant,
-                properties=selected_properties,
-                permission_payload=permission_payload,
-                all_properties_access=all_properties_access,
-            )
-            selected_area_ids = [int(x) for x in request.POST.getlist("area_ids") if str(x).isdigit()]
-            UserAreaPermission.objects.filter(
-                user=target_user,
-                tenant=tenant,
-                property=property_obj,
-            ).exclude(area_id__in=selected_area_ids).delete()
-            valid_areas = Area.objects.filter(tenant=tenant, property=property_obj, id__in=selected_area_ids)
-            for area in valid_areas:
-                UserAreaPermission.objects.update_or_create(
-                    user=target_user,
-                    tenant=tenant,
-                    property=property_obj,
-                    area=area,
-                    defaults={"can_view": True, "can_schedule": True},
-                )
-            AuditService.log(
-                tenant=tenant,
-                property_obj=property_obj,
-                user=request.user,
-                action="update",
-                entity_type="User",
-                entity_id=target_user.id,
-                before=before_user,
-                after=_audit_snapshot(target_user, ["email", "first_name", "last_name", "is_active", "is_super_admin"]),
-            )
-            messages.success(request, "Permisos actualizados.")
             return redirect("webui-users-permissions")
 
         if action == "reset_user_password":
@@ -8923,18 +9039,19 @@ def users_permissions_page(request):
                 messages.info(request, "La cuenta ya se encontraba inactiva.")
                 return redirect("webui-users-permissions")
             before = _audit_snapshot(target_user, ["email", "is_active", "is_super_admin"])
-            target_user.is_active = False
-            target_user.save(update_fields=["is_active", "updated_at"])
-            AuditService.log(
-                tenant=tenant,
-                property_obj=property_obj,
-                user=request.user,
-                action="delete",
-                entity_type="User",
-                entity_id=target_user.id,
-                before=before,
-                after=_audit_snapshot(target_user, ["email", "is_active", "is_super_admin"]),
-            )
+            with transaction.atomic():
+                target_user.is_active = False
+                target_user.save(update_fields=["is_active", "updated_at"])
+                AuditService.log(
+                    tenant=tenant,
+                    property_obj=property_obj,
+                    user=request.user,
+                    action="delete",
+                    entity_type="User",
+                    entity_id=target_user.id,
+                    before=before,
+                    after=_audit_snapshot(target_user, ["email", "is_active", "is_super_admin"]),
+                )
             messages.success(request, "Usuario desactivado.")
             return redirect("webui-users-permissions")
 
@@ -8957,19 +9074,51 @@ def users_permissions_page(request):
             if target_user.is_active:
                 messages.info(request, "La cuenta ya se encontraba activa.")
                 return redirect("webui-users-permissions")
-            before = _audit_snapshot(target_user, ["email", "is_active", "is_super_admin"])
-            target_user.is_active = True
-            target_user.save(update_fields=["is_active", "updated_at"])
-            AuditService.log(
-                tenant=tenant,
-                property_obj=property_obj,
-                user=request.user,
-                action="reactivate",
-                entity_type="User",
-                entity_id=target_user.id,
-                before=before,
-                after=_audit_snapshot(target_user, ["email", "is_active", "is_super_admin"]),
+            assignment = UserTenantRole.objects.filter(user=target_user, tenant=tenant).first()
+            selected_property_ids = set(
+                UserPropertyPermission.objects.filter(
+                    user=target_user,
+                    tenant=tenant,
+                    property__tenant=tenant,
+                    can_access=True,
+                ).values_list("property_id", flat=True)
             )
+            if assignment and assignment.all_properties_access:
+                selected_property_ids = set(
+                    Property.objects.filter(tenant=tenant).values_list("id", flat=True)
+                )
+            if assignment is None or (not assignment.all_properties_access and not selected_property_ids):
+                messages.error(
+                    request,
+                    "No se puede reactivar: primero configura al menos una sede válida para este usuario.",
+                )
+                return redirect("webui-users-permissions")
+            before = UserAccessService.snapshot(user=target_user, tenant=tenant)
+            with transaction.atomic():
+                UserAreaPermission.objects.filter(user=target_user, tenant=tenant).exclude(
+                    property_id__in=selected_property_ids
+                ).delete()
+                for area_permission in UserAreaPermission.objects.filter(
+                    user=target_user,
+                    tenant=tenant,
+                ).select_related("area"):
+                    if (
+                        area_permission.area.tenant_id != tenant.id
+                        or area_permission.area.property_id != area_permission.property_id
+                    ):
+                        area_permission.delete()
+                target_user.is_active = True
+                target_user.save(update_fields=["is_active", "updated_at"])
+                AuditService.log(
+                    tenant=tenant,
+                    property_obj=property_obj,
+                    user=request.user,
+                    action="reactivate",
+                    entity_type="User",
+                    entity_id=target_user.id,
+                    before=before,
+                    after=UserAccessService.snapshot(user=target_user, tenant=tenant),
+                )
             messages.success(request, "Usuario reactivado.")
             return redirect("webui-users-permissions")
 
@@ -9048,6 +9197,13 @@ def users_permissions_page(request):
         ("can_view_reports", "Reportes"),
         ("can_use_control", "Control"),
     )
+    manageable_property_ids = set(
+        PermissionService.get_accessible_property_ids(
+            request.user,
+            tenant,
+            action="can_manage_users",
+        )
+    )
     rows = []
     for tenant_role in role_map.values():
         role_profile_name = tenant_role.role_profile.name if tenant_role.role_profile_id else ""
@@ -9057,6 +9213,11 @@ def users_permissions_page(request):
             if tenant_role.all_properties_access
             else property_ids_map.get(tenant_role.user_id, set())
         )
+        if (
+            not PermissionService.is_super_admin(request.user)
+            and not set(selected_property_ids).issubset(manageable_property_ids)
+        ):
+            continue
         selected_property_names = [
             property_names_by_id[property_id]
             for property_id in sorted(selected_property_ids, key=lambda item: property_names_by_id.get(item, ""))
@@ -9088,6 +9249,7 @@ def users_permissions_page(request):
                 "selected_property_names": selected_property_names,
                 "permission": current_permission,
                 "permission_names": permission_names,
+                "has_current_property_access": property_obj.id in selected_property_ids,
                 "selected_area_ids": selected_area_ids,
                 "selected_area_names": selected_area_names,
             }

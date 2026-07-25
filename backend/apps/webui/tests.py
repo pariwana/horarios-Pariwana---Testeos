@@ -20,7 +20,7 @@ from apps.modules.models import ModuleActivation
 from apps.scheduling.models import ScheduleAssignment, SchedulePatternTemplate, ScheduleRangeTemplate
 from apps.tenants.models import Property, Tenant, TenantSupportAccessSession
 from apps.users.models import RoleChoices, RoleProfile, User, UserAreaPermission, UserPropertyPermission, UserTenantRole
-from apps.users.services import PermissionService
+from apps.users.services import PermissionService, RoleProfileService
 from apps.workers.models import Area, Shift, SpecialState, Worker
 
 
@@ -6588,6 +6588,12 @@ class WebUiUsersPermissionsTests(TestCase):
             can_access=True,
             can_manage_workers=True,
         )
+        UserPropertyPermission.objects.create(
+            user=self.user,
+            tenant=self.tenant,
+            property=self.property_2,
+            can_access=True,
+        )
         ModuleActivation.objects.create(tenant=self.tenant, module_key="users_permissions", is_enabled=True)
 
     def _activate_context(self):
@@ -6630,10 +6636,44 @@ class WebUiUsersPermissionsTests(TestCase):
         self.assertContains(response, "Pariwana Cusco")
         self.assertContains(response, "Pariwana Lima")
         self.assertContains(response, "Tipo de usuario")
-        self.assertContains(response, "Sedes permitidas")
-        self.assertContains(response, "Todas las sedes")
+        self.assertContains(response, reverse("webui-user-permissions-create"))
         self.assertNotContains(response, "Perfil de rol")
         self.assertNotContains(response, "Rol base")
+        form_response = self.client.get(reverse("webui-user-permissions-create"))
+        self.assertContains(form_response, "Sedes permitidas")
+
+    def test_full_page_creates_user_with_multiple_properties(self):
+        profile = RoleProfileService.ensure_defaults(self.tenant)[1]
+        self._activate_context()
+
+        response = self.client.post(
+            reverse("webui-user-permissions-create"),
+            {
+                "email": "new-full-page@pariwana.test",
+                "password": "StrongPass123",
+                "first_name": "Nueva",
+                "last_name": "Persona",
+                "role_profile_id": str(profile.id),
+                "property_ids": [str(self.property.id), str(self.property_2.id)],
+                "permissions_present": "1",
+                "can_schedule": "on",
+                f"area_scope_{self.property.id}": "all",
+                f"area_scope_{self.property_2.id}": "all",
+            },
+        )
+
+        self.assertRedirects(response, reverse("webui-users-permissions"))
+        created = User.objects.get(email="new-full-page@pariwana.test")
+        self.assertEqual(
+            set(
+                UserPropertyPermission.objects.filter(
+                    user=created,
+                    tenant=self.tenant,
+                ).values_list("property_id", flat=True)
+            ),
+            {self.property.id, self.property_2.id},
+        )
+        self.assertFalse(UserAreaPermission.objects.filter(user=created, tenant=self.tenant).exists())
 
     def test_create_user_and_permissions(self):
         self._activate_context()
@@ -6707,7 +6747,7 @@ class WebUiUsersPermissionsTests(TestCase):
             {self.property.id, self.property_2.id},
         )
 
-    def test_create_operator_with_all_properties_access_reaches_future_property(self):
+    def test_legacy_all_properties_operator_is_saved_as_exact_current_sites(self):
         self._activate_context()
         response = self.client.post(
             reverse("webui-users-permissions"),
@@ -6729,15 +6769,15 @@ class WebUiUsersPermissionsTests(TestCase):
         created = User.objects.get(email="all-operator@pariwana.test")
         tenant_role = UserTenantRole.objects.get(user=created, tenant=self.tenant)
         self.assertEqual(tenant_role.role, RoleChoices.OPERATOR)
-        self.assertTrue(tenant_role.all_properties_access)
+        self.assertFalse(tenant_role.all_properties_access)
         self.assertTrue(tenant_role.property_permissions_template["can_schedule"])
         future_property = Property.objects.create(
             tenant=self.tenant,
             name="Pariwana Miraflores",
             slug="pariwana-miraflores",
         )
-        self.assertIn(future_property.id, PermissionService.get_accessible_property_ids(created, self.tenant))
-        self.assertTrue(PermissionService.user_can_property_action(created, self.tenant, future_property, "can_schedule"))
+        self.assertNotIn(future_property.id, PermissionService.get_accessible_property_ids(created, self.tenant))
+        self.assertFalse(PermissionService.user_can_property_action(created, self.tenant, future_property, "can_schedule"))
 
     def test_create_role_profile_and_apply_defaults_to_user(self):
         self._activate_context()
@@ -6975,7 +7015,7 @@ class WebUiUsersPermissionsTests(TestCase):
         self.assertContains(response, "Horarios")
         self.assertContains(response, "BUK")
 
-    def test_update_user_sets_all_properties_access(self):
+    def test_legacy_all_properties_selection_is_saved_as_exact_current_sites(self):
         target = User.objects.create_user(email="target-all-properties@pariwana.test", password="StrongPass123")
         UserTenantRole.objects.create(user=target, tenant=self.tenant, role=RoleChoices.ADMIN)
         UserPropertyPermission.objects.create(
@@ -7003,10 +7043,11 @@ class WebUiUsersPermissionsTests(TestCase):
         )
         self.assertEqual(response.status_code, 302)
         role = UserTenantRole.objects.get(user=target, tenant=self.tenant)
-        self.assertTrue(role.all_properties_access)
+        self.assertFalse(role.all_properties_access)
         self.assertTrue(role.property_permissions_template["can_manage_users"])
         response = self.client.get(reverse("webui-users-permissions"))
-        self.assertContains(response, "Todas las sedes")
+        self.assertContains(response, "Pariwana Cusco")
+        self.assertContains(response, "Pariwana Lima")
 
     def test_deactivate_user(self):
         target = User.objects.create_user(email="deactivate-ui@pariwana.test", password="StrongPass123")
@@ -7049,6 +7090,27 @@ class WebUiUsersPermissionsTests(TestCase):
         self.assertEqual(response.status_code, 302)
         target.refresh_from_db()
         self.assertTrue(target.is_active)
+
+    def test_reactivate_user_rejects_account_without_a_valid_property_scope(self):
+        target = User.objects.create_user(
+            email="reactivate-without-property@pariwana.test",
+            password="StrongPass123",
+            is_active=False,
+        )
+        UserTenantRole.objects.create(user=target, tenant=self.tenant, role=RoleChoices.OPERATOR)
+        self._activate_context()
+
+        response = self.client.post(
+            reverse("webui-users-permissions"),
+            {
+                "action": "reactivate_user",
+                "user_id": str(target.id),
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        target.refresh_from_db()
+        self.assertFalse(target.is_active)
 
     def test_delete_inactive_user_permanently(self):
         target = User.objects.create_user(email="destroy-ui@pariwana.test", password="StrongPass123", is_active=False)
@@ -7219,6 +7281,501 @@ class WebUiUsersPermissionsTests(TestCase):
                 property=foreign_property,
             ).exists()
         )
+
+    def test_full_page_changes_user_from_cusco_to_lima_and_removes_cusco_areas(self):
+        lima_area = Area.objects.create(tenant=self.tenant, property=self.property_2, name="Recepción Lima")
+        target = User.objects.create_user(email="move-to-lima@pariwana.test", password="StrongPass123")
+        profile = RoleProfileService.ensure_defaults(self.tenant)[1]
+        UserTenantRole.objects.create(
+            user=target,
+            tenant=self.tenant,
+            role=RoleChoices.OPERATOR,
+            role_profile=profile,
+        )
+        UserPropertyPermission.objects.create(
+            user=target,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+            can_schedule=True,
+        )
+        UserAreaPermission.objects.create(
+            user=target,
+            tenant=self.tenant,
+            property=self.property,
+            area=self.area_1,
+            can_view=True,
+            can_schedule=True,
+        )
+        self._activate_context()
+
+        response = self.client.post(
+            reverse("webui-user-permissions-edit", args=[target.id]),
+            {
+                "first_name": "Lima",
+                "last_name": "Only",
+                "role_profile_id": str(profile.id),
+                "property_ids": [str(self.property_2.id)],
+                "permissions_present": "1",
+                "can_schedule": "on",
+                f"area_scope_{self.property_2.id}": "specific",
+                f"area_ids_{self.property_2.id}": [str(lima_area.id)],
+            },
+        )
+
+        self.assertRedirects(response, reverse("webui-users-permissions"))
+        self.assertFalse(
+            UserPropertyPermission.objects.filter(user=target, tenant=self.tenant, property=self.property).exists()
+        )
+        self.assertFalse(
+            UserAreaPermission.objects.filter(user=target, tenant=self.tenant, property=self.property).exists()
+        )
+        lima_permission = UserPropertyPermission.objects.get(
+            user=target,
+            tenant=self.tenant,
+            property=self.property_2,
+        )
+        self.assertTrue(lima_permission.can_schedule)
+        self.assertTrue(
+            UserAreaPermission.objects.filter(user=target, property=self.property_2, area=lima_area).exists()
+        )
+        listing = self.client.get(reverse("webui-users-permissions"))
+        self.assertContains(listing, "Pariwana Lima")
+        self.assertContains(listing, "Sin acceso en esta sede")
+
+    def test_full_page_applies_same_permissions_to_both_properties_and_defaults_new_site_to_all_areas(self):
+        target = User.objects.create_user(email="both-sites@pariwana.test", password="StrongPass123")
+        profile = RoleProfileService.ensure_defaults(self.tenant)[1]
+        UserTenantRole.objects.create(
+            user=target,
+            tenant=self.tenant,
+            role=RoleChoices.OPERATOR,
+            role_profile=profile,
+        )
+        UserPropertyPermission.objects.create(
+            user=target,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+        )
+        self._activate_context()
+
+        response = self.client.post(
+            reverse("webui-user-permissions-edit", args=[target.id]),
+            {
+                "role_profile_id": str(profile.id),
+                "property_ids": [str(self.property.id), str(self.property_2.id)],
+                "permissions_present": "1",
+                "can_schedule": "on",
+                "can_view_reports": "on",
+                f"area_scope_{self.property.id}": "all",
+                f"area_scope_{self.property_2.id}": "all",
+            },
+        )
+
+        self.assertRedirects(response, reverse("webui-users-permissions"))
+        permissions = list(
+            UserPropertyPermission.objects.filter(user=target, tenant=self.tenant).order_by("property_id")
+        )
+        self.assertEqual(len(permissions), 2)
+        self.assertTrue(all(item.can_schedule and item.can_view_reports for item in permissions))
+        self.assertFalse(UserAreaPermission.objects.filter(user=target, tenant=self.tenant).exists())
+        future_area = Area.objects.create(
+            tenant=self.tenant,
+            property=self.property_2,
+            name="Área futura Lima",
+        )
+        self.assertTrue(PermissionService.user_can_area_view(target, self.tenant, self.property_2, future_area))
+
+    def test_lima_admin_cannot_view_edit_or_assign_cusco_scope(self):
+        limited_admin = User.objects.create_user(email="lima-admin@pariwana.test", password="StrongPass123")
+        UserTenantRole.objects.create(user=limited_admin, tenant=self.tenant, role=RoleChoices.ADMIN)
+        UserPropertyPermission.objects.create(
+            user=limited_admin,
+            tenant=self.tenant,
+            property=self.property_2,
+            can_access=True,
+        )
+        cusco_user = User.objects.create_user(email="cusco-only@pariwana.test", password="StrongPass123")
+        cusco_profile = RoleProfileService.ensure_defaults(self.tenant)[1]
+        UserTenantRole.objects.create(
+            user=cusco_user,
+            tenant=self.tenant,
+            role=RoleChoices.OPERATOR,
+            role_profile=cusco_profile,
+        )
+        UserPropertyPermission.objects.create(
+            user=cusco_user,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+        )
+        self.client.force_login(limited_admin)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property_2.id
+        session.save()
+
+        listing = self.client.get(reverse("webui-users-permissions"))
+        self.assertEqual(listing.status_code, 200)
+        self.assertNotContains(listing, cusco_user.email)
+
+        edit_response = self.client.get(reverse("webui-user-permissions-edit", args=[cusco_user.id]))
+        self.assertRedirects(edit_response, reverse("webui-users-permissions"))
+
+        create_response = self.client.post(
+            reverse("webui-user-permissions-create"),
+            {
+                "email": "forbidden-cusco@pariwana.test",
+                "password": "StrongPass123",
+                "role_profile_id": str(cusco_profile.id),
+                "property_ids": [str(self.property.id)],
+                "permissions_present": "1",
+                f"area_scope_{self.property.id}": "all",
+            },
+        )
+        self.assertEqual(create_response.status_code, 200)
+        self.assertFalse(User.objects.filter(email="forbidden-cusco@pariwana.test").exists())
+
+        update_response = self.client.post(
+            reverse("webui-users-permissions"),
+            {
+                "action": "update_property_permissions",
+                "user_id": str(cusco_user.id),
+                "role_profile_id": str(cusco_profile.id),
+                "property_ids": [str(self.property_2.id)],
+                "permissions_present": "1",
+            },
+        )
+        self.assertRedirects(update_response, reverse("webui-users-permissions"))
+        self.assertTrue(
+            UserPropertyPermission.objects.filter(
+                user=cusco_user,
+                tenant=self.tenant,
+                property=self.property,
+            ).exists()
+        )
+        self.assertFalse(
+            UserPropertyPermission.objects.filter(
+                user=cusco_user,
+                tenant=self.tenant,
+                property=self.property_2,
+            ).exists()
+        )
+        self.client.post(
+            reverse("webui-users-permissions"),
+            {
+                "action": "deactivate_user",
+                "user_id": str(cusco_user.id),
+            },
+        )
+        cusco_user.refresh_from_db()
+        self.assertTrue(cusco_user.is_active)
+
+    def test_changing_type_replaces_previous_permissions_with_suggested_defaults(self):
+        target = User.objects.create_user(email="change-type@pariwana.test", password="StrongPass123")
+        profiles = RoleProfileService.ensure_defaults(self.tenant)
+        operator_profile = next(item for item in profiles if item.base_role == RoleChoices.OPERATOR)
+        supervisor_profile = next(item for item in profiles if item.base_role == RoleChoices.SUPERVISOR)
+        UserTenantRole.objects.create(
+            user=target,
+            tenant=self.tenant,
+            role=RoleChoices.OPERATOR,
+            role_profile=operator_profile,
+        )
+        UserPropertyPermission.objects.create(
+            user=target,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+            can_export_buk=True,
+            can_manage_workers=True,
+        )
+        self._activate_context()
+
+        response = self.client.post(
+            reverse("webui-user-permissions-edit", args=[target.id]),
+            {
+                "role_profile_id": str(supervisor_profile.id),
+                "property_ids": [str(self.property.id), str(self.property_2.id)],
+                "apply_role_profile_defaults": "on",
+                f"area_scope_{self.property.id}": "all",
+                f"area_scope_{self.property_2.id}": "all",
+            },
+        )
+
+        self.assertRedirects(response, reverse("webui-users-permissions"))
+        assignment = UserTenantRole.objects.get(user=target, tenant=self.tenant)
+        self.assertEqual(assignment.role, RoleChoices.SUPERVISOR)
+        self.assertEqual(assignment.role_profile, supervisor_profile)
+        for permission in UserPropertyPermission.objects.filter(user=target, tenant=self.tenant):
+            self.assertTrue(permission.can_schedule)
+            self.assertFalse(permission.can_export_buk)
+            self.assertFalse(permission.can_manage_workers)
+
+    def test_full_page_rejects_foreign_property_and_area_ids(self):
+        target = User.objects.create_user(email="safe-scope@pariwana.test", password="StrongPass123")
+        profile = RoleProfileService.ensure_defaults(self.tenant)[2]
+        UserTenantRole.objects.create(
+            user=target,
+            tenant=self.tenant,
+            role=RoleChoices.SUPERVISOR,
+            role_profile=profile,
+        )
+        UserPropertyPermission.objects.create(
+            user=target,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+        )
+        foreign_tenant = Tenant.objects.create(name="Tenant externo manipulado", slug="tenant-externo-manipulado")
+        foreign_property = Property.objects.create(
+            tenant=foreign_tenant,
+            name="Sede externa manipulada",
+            slug="sede-externa-manipulada",
+        )
+        foreign_area = Area.objects.create(
+            tenant=foreign_tenant,
+            property=foreign_property,
+            name="Área externa",
+        )
+        self._activate_context()
+
+        response = self.client.post(
+            reverse("webui-user-permissions-edit", args=[target.id]),
+            {
+                "role_profile_id": str(profile.id),
+                "property_ids": [str(foreign_property.id)],
+                "permissions_present": "1",
+                f"area_scope_{foreign_property.id}": "specific",
+                f"area_ids_{foreign_property.id}": [str(foreign_area.id)],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(
+            UserPropertyPermission.objects.filter(user=target, tenant=self.tenant, property=self.property).exists()
+        )
+        self.assertFalse(
+            UserPropertyPermission.objects.filter(user=target, tenant=foreign_tenant).exists()
+        )
+
+    def test_full_page_rejects_role_profile_from_another_tenant(self):
+        target = User.objects.create_user(email="foreign-profile@pariwana.test", password="StrongPass123")
+        profile = RoleProfileService.ensure_defaults(self.tenant)[1]
+        UserTenantRole.objects.create(
+            user=target,
+            tenant=self.tenant,
+            role=RoleChoices.OPERATOR,
+            role_profile=profile,
+        )
+        UserPropertyPermission.objects.create(
+            user=target,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+        )
+        foreign_tenant = Tenant.objects.create(name="Tenant perfil externo", slug="tenant-perfil-externo")
+        foreign_profile = RoleProfile.objects.create(
+            tenant=foreign_tenant,
+            code="foreign",
+            name="Perfil externo",
+            base_role=RoleChoices.ADMIN,
+            permissions={"can_access": True, "can_manage_users": True},
+            active=True,
+        )
+        self._activate_context()
+
+        response = self.client.post(
+            reverse("webui-user-permissions-edit", args=[target.id]),
+            {
+                "role_profile_id": str(foreign_profile.id),
+                "property_ids": [str(self.property.id)],
+                "permissions_present": "1",
+                f"area_scope_{self.property.id}": "all",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        assignment = UserTenantRole.objects.get(user=target, tenant=self.tenant)
+        self.assertEqual(assignment.role_profile, profile)
+
+    def test_full_page_rejects_area_from_an_unselected_property(self):
+        lima_area = Area.objects.create(tenant=self.tenant, property=self.property_2, name="Área Lima ajena")
+        target = User.objects.create_user(email="wrong-area-scope@pariwana.test", password="StrongPass123")
+        profile = RoleProfileService.ensure_defaults(self.tenant)[2]
+        UserTenantRole.objects.create(
+            user=target,
+            tenant=self.tenant,
+            role=RoleChoices.SUPERVISOR,
+            role_profile=profile,
+        )
+        UserPropertyPermission.objects.create(
+            user=target,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+        )
+        self._activate_context()
+
+        response = self.client.post(
+            reverse("webui-user-permissions-edit", args=[target.id]),
+            {
+                "role_profile_id": str(profile.id),
+                "property_ids": [str(self.property.id)],
+                "permissions_present": "1",
+                f"area_scope_{self.property.id}": "specific",
+                f"area_ids_{self.property.id}": [str(lima_area.id)],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(UserAreaPermission.objects.filter(user=target, area=lima_area).exists())
+        self.assertTrue(
+            UserPropertyPermission.objects.filter(user=target, tenant=self.tenant, property=self.property).exists()
+        )
+
+    def test_full_page_rejects_save_without_any_selected_property(self):
+        target = User.objects.create_user(email="no-property@pariwana.test", password="StrongPass123")
+        profile = RoleProfileService.ensure_defaults(self.tenant)[1]
+        UserTenantRole.objects.create(
+            user=target,
+            tenant=self.tenant,
+            role=RoleChoices.OPERATOR,
+            role_profile=profile,
+        )
+        UserPropertyPermission.objects.create(
+            user=target,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+        )
+        self._activate_context()
+
+        response = self.client.post(
+            reverse("webui-user-permissions-edit", args=[target.id]),
+            {
+                "role_profile_id": str(profile.id),
+                "permissions_present": "1",
+                "can_schedule": "on",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Selecciona al menos una sede permitida.")
+        self.assertFalse(any(card["selected"] for card in response.context["property_cards"]))
+        self.assertTrue(
+            UserPropertyPermission.objects.filter(user=target, tenant=self.tenant, property=self.property).exists()
+        )
+
+    def test_user_access_save_rolls_back_all_changes_when_area_sync_fails(self):
+        target = User.objects.create_user(
+            email="atomic-user@pariwana.test",
+            password="StrongPass123",
+            first_name="Original",
+        )
+        profile = RoleProfileService.ensure_defaults(self.tenant)[1]
+        UserTenantRole.objects.create(
+            user=target,
+            tenant=self.tenant,
+            role=RoleChoices.OPERATOR,
+            role_profile=profile,
+        )
+        UserPropertyPermission.objects.create(
+            user=target,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+        )
+        original_assignment = UserTenantRole.objects.get(user=target, tenant=self.tenant)
+        original_audit_count = AuditLog.objects.filter(
+            tenant=self.tenant,
+            entity_type="User",
+            entity_id=str(target.id),
+        ).count()
+        rollback_area = Area.objects.create(
+            tenant=self.tenant,
+            property=self.property_2,
+            name="Área rollback",
+        )
+        self._activate_context()
+
+        with patch("apps.users.services.UserAreaPermission.objects.bulk_create", side_effect=RuntimeError("fallo")):
+            with self.assertRaises(RuntimeError):
+                self.client.post(
+                    reverse("webui-user-permissions-edit", args=[target.id]),
+                    {
+                        "first_name": "No debe persistir",
+                        "role_profile_id": str(profile.id),
+                        "property_ids": [str(self.property_2.id)],
+                        "permissions_present": "1",
+                        "can_schedule": "on",
+                        f"area_scope_{self.property_2.id}": "specific",
+                        f"area_ids_{self.property_2.id}": [str(rollback_area.id)],
+                    },
+                )
+
+        target.refresh_from_db()
+        self.assertEqual(target.first_name, "Original")
+        self.assertTrue(
+            UserPropertyPermission.objects.filter(user=target, tenant=self.tenant, property=self.property).exists()
+        )
+        self.assertFalse(
+            UserPropertyPermission.objects.filter(user=target, tenant=self.tenant, property=self.property_2).exists()
+        )
+        assignment = UserTenantRole.objects.get(user=target, tenant=self.tenant)
+        self.assertEqual(assignment.role, original_assignment.role)
+        self.assertEqual(assignment.role_profile_id, original_assignment.role_profile_id)
+        self.assertFalse(UserAreaPermission.objects.filter(user=target, tenant=self.tenant).exists())
+        self.assertEqual(
+            AuditLog.objects.filter(
+                tenant=self.tenant,
+                entity_type="User",
+                entity_id=str(target.id),
+            ).count(),
+            original_audit_count,
+        )
+
+    def test_user_access_audit_contains_type_properties_permissions_and_areas(self):
+        target = User.objects.create_user(email="audited-access@pariwana.test", password="StrongPass123")
+        profile = RoleProfileService.ensure_defaults(self.tenant)[2]
+        UserTenantRole.objects.create(
+            user=target,
+            tenant=self.tenant,
+            role=RoleChoices.SUPERVISOR,
+            role_profile=profile,
+        )
+        UserPropertyPermission.objects.create(
+            user=target,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+        )
+        self._activate_context()
+
+        self.client.post(
+            reverse("webui-user-permissions-edit", args=[target.id]),
+            {
+                "role_profile_id": str(profile.id),
+                "property_ids": [str(self.property.id)],
+                "permissions_present": "1",
+                "can_schedule": "on",
+                f"area_scope_{self.property.id}": "specific",
+                f"area_ids_{self.property.id}": [str(self.area_1.id)],
+            },
+        )
+
+        log = AuditLog.objects.filter(entity_type="User", entity_id=str(target.id), action="update").latest("id")
+        for key in ("type", "properties", "permissions", "areas"):
+            self.assertIn(key, log.before)
+            self.assertIn(key, log.after)
+        self.assertEqual(log.after["type"]["role"], RoleChoices.SUPERVISOR)
+        self.assertEqual(
+            {item["id"] for item in log.after["properties"]},
+            {self.property.id},
+        )
+        self.assertEqual(log.after["areas"][str(self.property.id)]["mode"], "specific")
+        self.assertNotIn("password", json.dumps({"before": log.before, "after": log.after}).lower())
 
 
 class WebUiBackupTests(TestCase):

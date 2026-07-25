@@ -104,7 +104,7 @@
       <p class="compact-note">Gestiona usuarios, tipos de usuario y permisos por sede o area.</p>
     </div>
     <div class="page-actions">
-      <button class="primary" type="button" data-open-modal="user-create-modal">+ Nuevo usuario</button>
+      <a class="button primary" href="{% url 'webui-user-permissions-create' %}">+ Nuevo usuario</a>
       <button class="desktop-role-create-action" type="button" data-open-modal="role-create-modal">+ Nuevo tipo</button>
     </div>
   </div>
@@ -153,7 +153,9 @@
                 </div>
               </td>
               <td>
-                {% if row.selected_area_names %}
+                {% if not row.has_current_property_access %}
+                  <span class="muted">Sin acceso en esta sede</span>
+                {% elif row.selected_area_names %}
                   <div class="area-chips">
                     {% for area_name in row.selected_area_names %}{% if forloop.counter <= 2 %}<span class="badge">{{ area_name }}</span>{% endif %}{% endfor %}
                     {% if row.selected_area_names|length > 2 %}
@@ -170,7 +172,7 @@
               <td>{% if row.user.is_active %}<span class="badge badge-ok">Activo</span>{% else %}<span class="badge badge-muted">Inactivo</span>{% endif %}</td>
               <td>
                 <span class="icon-actions">
-                  <button class="icon-button" type="button" data-open-modal="user-edit-modal-{{ row.user.id }}" title="Editar permisos" aria-label="Editar permisos de {{ row.user.email }}">&#9998;</button>
+                  <a class="icon-button" href="{% url 'webui-user-permissions-edit' row.user.id %}" title="Editar usuario y permisos" aria-label="Editar usuario y permisos de {{ row.user.email }}">&#9998;</a>
                   {% if row.user.is_active %}
                     <button class="icon-button" type="button" data-open-modal="user-password-modal-{{ row.user.id }}" title="Restablecer contrasena" aria-label="Restablecer contraseña de {{ row.user.email }}">&#8635;</button>
                     <button class="icon-button danger" type="button" data-open-modal="user-delete-modal-{{ row.user.id }}" title="Desactivar usuario" aria-label="Desactivar usuario {{ row.user.email }}">&#10005;</button>
@@ -204,10 +206,12 @@
             </div>
             <div class="mobile-card-meta area-chips">
               <strong>Áreas:</strong>
-              {% if row.selected_area_names %}{% for area_name in row.selected_area_names %}{% if forloop.counter <= 2 %}<span class="badge">{{ area_name }}</span>{% endif %}{% endfor %}{% if row.selected_area_names|length > 2 %}<details class="role-summary"><summary aria-label="Ver todas las áreas">+{{ row.selected_area_names|length|add:"-2" }} más</summary><div class="role-summary-list">{% for area_name in row.selected_area_names %}<span>{{ area_name }}</span>{% endfor %}</div></details>{% endif %}{% else %}<span class="badge">Todas</span>{% endif %}
+              {% if not row.has_current_property_access %}
+                <span class="muted">Sin acceso en esta sede</span>
+              {% elif row.selected_area_names %}{% for area_name in row.selected_area_names %}{% if forloop.counter <= 2 %}<span class="badge">{{ area_name }}</span>{% endif %}{% endfor %}{% if row.selected_area_names|length > 2 %}<details class="role-summary"><summary aria-label="Ver todas las áreas">+{{ row.selected_area_names|length|add:"-2" }} más</summary><div class="role-summary-list">{% for area_name in row.selected_area_names %}<span>{{ area_name }}</span>{% endfor %}</div></details>{% endif %}{% else %}<span class="badge">Todas</span>{% endif %}
             </div>
             <div class="icon-actions">
-              <button class="icon-button" type="button" data-open-modal="user-edit-modal-{{ row.user.id }}" title="Editar permisos" aria-label="Editar permisos de {{ row.user.email }}">&#9998;</button>
+              <a class="icon-button" href="{% url 'webui-user-permissions-edit' row.user.id %}" title="Editar usuario y permisos" aria-label="Editar usuario y permisos de {{ row.user.email }}">&#9998;</a>
               {% if row.user.is_active %}
                 <button class="icon-button" type="button" data-open-modal="user-password-modal-{{ row.user.id }}" title="Restablecer contrasena" aria-label="Restablecer contraseña de {{ row.user.email }}">&#8635;</button>
                 <button class="icon-button danger" type="button" data-open-modal="user-delete-modal-{{ row.user.id }}" title="Desactivar usuario" aria-label="Desactivar usuario {{ row.user.email }}">&#10005;</button>
@@ -303,154 +307,7 @@
     </div>
   </dialog>
 
-  <dialog class="modal-dialog" id="user-create-modal">
-    <div class="modal-header">
-      <h3>Nuevo usuario</h3>
-      <button class="modal-close" type="button" data-close-modal>&times;</button>
-    </div>
-    <div class="modal-body">
-      <form method="post" class="stack">
-        {% csrf_token %}
-        <input type="hidden" name="action" value="create_user">
-        <div>
-          <label>Sedes permitidas</label>
-          <label style="display:flex; gap:8px; align-items:center;">
-            <input type="checkbox" name="all_properties_access" data-all-properties>
-            Todas las sedes
-          </label>
-          <div class="form-grid" data-property-checkboxes>
-            {% for property in tenant_properties %}
-              <label style="display:flex; gap:8px; align-items:center;">
-                <input type="checkbox" name="property_ids" value="{{ property.id }}" {% if selected_property and selected_property.id == property.id %}checked{% endif %}>
-                {{ property.name }}
-              </label>
-            {% endfor %}
-          </div>
-        </div>
-        <div class="form-grid">
-          <div>
-            <label>Email</label>
-            <input type="email" name="email" required>
-          </div>
-          <div>
-            <label>Contrasena</label>
-            <input type="password" name="password" required>
-          </div>
-          <div>
-            <label>Nombres</label>
-            <input type="text" name="first_name">
-          </div>
-          <div>
-            <label>Apellidos</label>
-            <input type="text" name="last_name">
-          </div>
-        </div>
-        <div>
-          <label>Tipo de usuario</label>
-          <select name="role_profile_id" required>
-            <option value="">Seleccionar tipo</option>
-            {% for profile in role_profiles %}
-              <option value="{{ profile.id }}">{{ profile.name }}</option>
-            {% endfor %}
-          </select>
-          <p class="compact-note">Elige Administrador, Operador, Supervisor o un tipo personalizado. La app aplicara el nivel y permisos de ese tipo.</p>
-        </div>
-        <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="apply_role_profile_defaults" checked> Usar permisos sugeridos para este tipo</label>
-        {% include "webui/_permission_checkboxes.html" %}
-        <div>
-          <label>Areas permitidas (opcional)</label>
-          <select name="area_ids" multiple style="min-height: 120px; width: 100%;">
-            {% for area in areas %}
-              <option value="{{ area.id }}">{{ area.name }}</option>
-            {% endfor %}
-          </select>
-        </div>
-        <div class="modal-actions">
-          <button type="button" data-close-modal>Cancelar</button>
-          <button class="primary" type="submit">Guardar usuario</button>
-        </div>
-      </form>
-    </div>
-  </dialog>
-
   {% for row in rows %}
-    <dialog class="modal-dialog" id="user-edit-modal-{{ row.user.id }}">
-      <div class="modal-header">
-        <h3>Editar permisos</h3>
-        <button class="modal-close" type="button" data-close-modal>&times;</button>
-      </div>
-      <div class="modal-body">
-        <form method="post" class="stack">
-          {% csrf_token %}
-          <input type="hidden" name="action" value="update_property_permissions">
-          <input type="hidden" name="user_id" value="{{ row.user.id }}">
-          <div>
-            <label>Usuario</label>
-            <input type="text" value="{{ row.user.email }}" disabled>
-          </div>
-          <div>
-            <label>Sedes permitidas</label>
-            <label style="display:flex; gap:8px; align-items:center;">
-              <input type="checkbox" name="all_properties_access" data-all-properties {% if row.all_properties_access %}checked{% endif %}>
-              Todas las sedes
-            </label>
-            <div class="form-grid" data-property-checkboxes>
-              {% for property in tenant_properties %}
-                <label style="display:flex; gap:8px; align-items:center;">
-                  <input type="checkbox" name="property_ids" value="{{ property.id }}" {% if row.all_properties_access or property.id in row.selected_property_ids %}checked{% endif %}>
-                  {{ property.name }}
-                </label>
-              {% endfor %}
-            </div>
-          </div>
-          <div class="form-grid">
-            <div>
-              <label>Nombres</label>
-              <input type="text" name="first_name" value="{{ row.user.first_name }}">
-            </div>
-            <div>
-              <label>Apellidos</label>
-              <input type="text" name="last_name" value="{{ row.user.last_name }}">
-            </div>
-          </div>
-          <div>
-            <label>Tipo de usuario</label>
-            <select name="role_profile_id" required>
-              <option value="">Seleccionar tipo</option>
-              {% for profile in role_profiles %}
-                <option value="{{ profile.id }}" {% if row.role_profile_id == profile.id %}selected{% endif %}>{{ profile.name }}</option>
-              {% endfor %}
-            </select>
-            <p class="compact-note">Si cambias el tipo y marcas la siguiente opcion, se actualizaran los permisos sugeridos.</p>
-          </div>
-          <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="apply_role_profile_defaults"> Reemplazar permisos por los sugeridos para este tipo</label>
-          <div class="form-grid">
-            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_access" {% if row.permission.can_access %}checked{% endif %}> Acceso sede</label>
-            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_schedule" {% if row.permission.can_schedule %}checked{% endif %}> Programar horarios</label>
-            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_export_buk" {% if row.permission.can_export_buk %}checked{% endif %}> Exportar BUK</label>
-            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_manage_workers" {% if row.permission.can_manage_workers %}checked{% endif %}> Gestionar trabajadores</label>
-            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_manage_shifts" {% if row.permission.can_manage_shifts %}checked{% endif %}> Gestionar turnos</label>
-            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_manage_areas" {% if row.permission.can_manage_areas %}checked{% endif %}> Gestionar areas</label>
-            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_manage_users" {% if row.permission.can_manage_users %}checked{% endif %}> Gestionar usuarios</label>
-            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_view_reports" {% if row.permission.can_view_reports %}checked{% endif %}> Ver reportes</label>
-            <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" name="can_use_control" {% if row.permission.can_use_control %}checked{% endif %}> Usar control</label>
-          </div>
-          <div>
-            <label>Areas permitidas</label>
-            <select name="area_ids" multiple style="min-height: 100px; width: 100%;">
-              {% for area in areas %}
-                <option value="{{ area.id }}" {% if area.id in row.selected_area_ids %}selected{% endif %}>{{ area.name }}</option>
-              {% endfor %}
-            </select>
-          </div>
-          <div class="modal-actions">
-            <button type="button" data-close-modal>Cancelar</button>
-            <button class="primary" type="submit">Guardar permisos</button>
-          </div>
-        </form>
-      </div>
-    </dialog>
-
     <dialog class="modal-dialog" id="user-password-modal-{{ row.user.id }}">
       <div class="modal-header">
         <h3>Restablecer contrasena</h3>

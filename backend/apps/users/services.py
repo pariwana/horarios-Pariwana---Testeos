@@ -1,3 +1,7 @@
+from django.core.exceptions import ValidationError
+from django.db import transaction
+
+from apps.audit.services import AuditService
 from apps.modules.models import ModuleActivation
 from apps.tenants.models import Property
 from apps.users.models import RoleChoices, RoleProfile, UserAreaPermission, UserPropertyPermission, UserTenantRole
@@ -97,6 +101,189 @@ class RoleProfileService:
         return RoleProfileService.normalize_permissions(profile.permissions)
 
 
+class UserAccessService:
+    VALID_ROLES = {RoleChoices.ADMIN, RoleChoices.OPERATOR, RoleChoices.SUPERVISOR}
+
+    @staticmethod
+    def snapshot(*, user, tenant):
+        assignment = (
+            UserTenantRole.objects.filter(user=user, tenant=tenant)
+            .select_related("role_profile")
+            .first()
+        )
+        property_permissions = list(
+            UserPropertyPermission.objects.filter(user=user, tenant=tenant)
+            .select_related("property")
+            .order_by("property__name")
+        )
+        area_permissions = list(
+            UserAreaPermission.objects.filter(user=user, tenant=tenant)
+            .select_related("property", "area")
+            .order_by("property__name", "area__name")
+        )
+        areas_by_property = {}
+        for item in area_permissions:
+            areas_by_property.setdefault(str(item.property_id), []).append(
+                {"id": item.area_id, "name": item.area.name}
+            )
+        return {
+            "user": {
+                "email": user.email,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "is_active": user.is_active,
+            },
+            "type": {
+                "role": assignment.role if assignment else None,
+                "role_profile_id": assignment.role_profile_id if assignment else None,
+                "role_profile_name": assignment.role_profile.name if assignment and assignment.role_profile_id else None,
+            },
+            "properties": [
+                {"id": item.property_id, "name": item.property.name}
+                for item in property_permissions
+                if item.can_access
+            ],
+            "permissions": {
+                str(item.property_id): RoleProfileService.normalize_permissions(
+                    {key: getattr(item, key) for key in PROPERTY_PERMISSION_KEYS}
+                )
+                for item in property_permissions
+            },
+            "areas": {
+                str(item.property_id): {
+                    "mode": "specific" if str(item.property_id) in areas_by_property else "all",
+                    "selected": areas_by_property.get(str(item.property_id), []),
+                }
+                for item in property_permissions
+                if item.can_access
+            },
+        }
+
+    @staticmethod
+    @transaction.atomic
+    def sync(
+        *,
+        user,
+        tenant,
+        role_profile,
+        property_ids,
+        permission_payload,
+        area_scopes,
+        actor,
+        audit_property,
+        before_snapshot=None,
+        allowed_property_ids=None,
+    ):
+        if role_profile is None or role_profile.tenant_id != tenant.id or not role_profile.active:
+            raise ValidationError("Selecciona un tipo de usuario válido.")
+        if role_profile.base_role not in UserAccessService.VALID_ROLES:
+            raise ValidationError("El tipo de usuario no tiene un rol base válido.")
+
+        normalized_property_ids = {int(item) for item in property_ids}
+        properties = list(
+            Property.objects.filter(tenant=tenant, id__in=normalized_property_ids).order_by("name")
+        )
+        if not properties:
+            raise ValidationError("Selecciona al menos una sede permitida.")
+        if {item.id for item in properties} != normalized_property_ids:
+            raise ValidationError("Una de las sedes seleccionadas no pertenece al tenant autorizado.")
+        if allowed_property_ids is not None and not normalized_property_ids.issubset(
+            {int(item) for item in allowed_property_ids}
+        ):
+            raise ValidationError("No puedes asignar una sede fuera de tu alcance autorizado.")
+
+        from apps.workers.models import Area
+
+        normalized_area_scopes = {}
+        for property_obj in properties:
+            scope = area_scopes.get(property_obj.id)
+            if scope is None:
+                normalized_area_scopes[property_obj.id] = None
+                continue
+            area_ids = {int(item) for item in scope}
+            valid_area_ids = set(
+                Area.objects.filter(
+                    tenant=tenant,
+                    property=property_obj,
+                    active=True,
+                    id__in=area_ids,
+                ).values_list("id", flat=True)
+            )
+            if not area_ids or valid_area_ids != area_ids:
+                raise ValidationError(
+                    f"Selecciona áreas válidas de {property_obj.name} o usa “Todas las áreas”."
+                )
+            normalized_area_scopes[property_obj.id] = valid_area_ids
+
+        before = (
+            before_snapshot
+            if before_snapshot is not None
+            else UserAccessService.snapshot(user=user, tenant=tenant)
+        )
+        normalized_permissions = RoleProfileService.normalize_permissions(permission_payload)
+        normalized_permissions["can_access"] = True
+
+        assignment, _ = UserTenantRole.objects.update_or_create(
+            user=user,
+            tenant=tenant,
+            defaults={
+                "role": role_profile.base_role,
+                "role_profile": role_profile,
+                "all_properties_access": False,
+                "property_permissions_template": normalized_permissions,
+            },
+        )
+
+        selected_property_ids = {item.id for item in properties}
+        UserPropertyPermission.objects.filter(user=user, tenant=tenant).exclude(
+            property_id__in=selected_property_ids
+        ).delete()
+        UserAreaPermission.objects.filter(user=user, tenant=tenant).exclude(
+            property_id__in=selected_property_ids
+        ).delete()
+
+        for property_obj in properties:
+            UserPropertyPermission.objects.update_or_create(
+                user=user,
+                tenant=tenant,
+                property=property_obj,
+                defaults=normalized_permissions,
+            )
+            UserAreaPermission.objects.filter(
+                user=user,
+                tenant=tenant,
+                property=property_obj,
+            ).delete()
+            selected_area_ids = normalized_area_scopes[property_obj.id]
+            if selected_area_ids is not None:
+                UserAreaPermission.objects.bulk_create(
+                    [
+                        UserAreaPermission(
+                            user=user,
+                            tenant=tenant,
+                            property=property_obj,
+                            area_id=area_id,
+                            can_view=True,
+                            can_schedule=normalized_permissions["can_schedule"],
+                        )
+                        for area_id in selected_area_ids
+                    ]
+                )
+
+        after = UserAccessService.snapshot(user=user, tenant=tenant)
+        AuditService.log(
+            tenant=tenant,
+            property_obj=audit_property,
+            user=actor,
+            action="create" if before == {} else "update",
+            entity_type="User",
+            entity_id=user.id,
+            before=before,
+            after=after,
+        )
+        return assignment
+
+
 class PermissionService:
     @staticmethod
     def _tenant_role_assignment(user, tenant):
@@ -127,14 +314,16 @@ class PermissionService:
             return True
         assignment = PermissionService._tenant_role_assignment(user, tenant)
         role = assignment.role if assignment else None
-        if role in {RoleChoices.SUPER_ADMIN, RoleChoices.ADMIN}:
+        if role == RoleChoices.SUPER_ADMIN:
             return True
         if (
-            role == RoleChoices.OPERATOR
+            role in {RoleChoices.ADMIN, RoleChoices.OPERATOR}
             and assignment
             and assignment.all_properties_access
             and property_obj.tenant_id == tenant.id
         ):
+            if role == RoleChoices.ADMIN:
+                return True
             template = RoleProfileService.normalize_permissions(assignment.property_permissions_template)
             return bool(template.get(action))
 
@@ -146,6 +335,8 @@ class PermissionService:
         ).first()
         if not perm:
             return False
+        if role == RoleChoices.ADMIN:
+            return True
         return bool(getattr(perm, action, False))
 
     @staticmethod
@@ -182,7 +373,7 @@ class PermissionService:
             tenant=tenant,
             can_access=True,
         )
-        if action != "can_access":
+        if action != "can_access" and (assignment is None or assignment.role != RoleChoices.ADMIN):
             perms = perms.filter(**{action: True})
         return list(perms.values_list("property_id", flat=True))
 
@@ -194,7 +385,7 @@ class PermissionService:
         areas = Area.objects.filter(tenant=tenant)
         if property_obj is not None:
             areas = areas.filter(property=property_obj)
-        if role in {RoleChoices.SUPER_ADMIN, RoleChoices.ADMIN}:
+        if role == RoleChoices.SUPER_ADMIN:
             return list(areas.values_list("id", flat=True))
 
         property_ids = (
@@ -204,12 +395,24 @@ class PermissionService:
         )
         allowed_area_ids = []
         for property_id in property_ids:
+            property_instance = property_obj or Property.objects.filter(
+                tenant=tenant,
+                id=property_id,
+            ).first()
+            property_action = "can_schedule" if action == "can_schedule" else "can_access"
+            if property_instance is None or not PermissionService.user_can_property_action(
+                user,
+                tenant,
+                property_instance,
+                property_action,
+            ):
+                continue
             perms = UserAreaPermission.objects.filter(
                 user=user,
                 tenant=tenant,
                 property_id=property_id,
             )
-            if role == RoleChoices.OPERATOR and not perms.exists():
+            if not perms.exists():
                 allowed_area_ids.extend(
                     areas.filter(property_id=property_id).values_list("id", flat=True)
                 )
@@ -223,14 +426,18 @@ class PermissionService:
     @staticmethod
     def user_can_area_schedule(user, tenant, property_obj, area):
         role = PermissionService.get_user_role(user, tenant)
-        if role in {RoleChoices.SUPER_ADMIN, RoleChoices.ADMIN}:
+        if role == RoleChoices.SUPER_ADMIN:
             return True
         if area is None:
+            return False
+        if area.property_id != property_obj.id or area.tenant_id != tenant.id:
+            return False
+        if not PermissionService.user_can_property_action(user, tenant, property_obj, "can_schedule"):
             return False
 
         perms_qs = PermissionService._area_permissions_for_user(user, tenant, property_obj)
         has_area_scope = perms_qs.exists()
-        if role == RoleChoices.OPERATOR and not has_area_scope:
+        if not has_area_scope:
             return True
 
         return perms_qs.filter(
@@ -242,14 +449,18 @@ class PermissionService:
     @staticmethod
     def user_can_area_view(user, tenant, property_obj, area):
         role = PermissionService.get_user_role(user, tenant)
-        if role in {RoleChoices.SUPER_ADMIN, RoleChoices.ADMIN}:
+        if role == RoleChoices.SUPER_ADMIN:
             return True
         if area is None:
+            return False
+        if area.property_id != property_obj.id or area.tenant_id != tenant.id:
+            return False
+        if not PermissionService.user_can_property_action(user, tenant, property_obj, "can_access"):
             return False
 
         perms_qs = PermissionService._area_permissions_for_user(user, tenant, property_obj)
         has_area_scope = perms_qs.exists()
-        if role == RoleChoices.OPERATOR and not has_area_scope:
+        if not has_area_scope:
             return True
 
         return perms_qs.filter(area=area, can_view=True).exists()

@@ -217,6 +217,53 @@ class PermissionServiceTests(TestCase):
         self.assertTrue(PermissionService.user_can_property_action(operator, self.tenant, future_property, "can_schedule"))
         self.assertFalse(PermissionService.user_can_property_action(operator, self.tenant, future_property, "can_export_buk"))
 
+    def test_supervisor_without_area_rows_has_dynamic_all_area_access_in_selected_property(self):
+        supervisor = User.objects.create_user(email="supervisor-all-areas@pariwana.test", password="StrongPass123")
+        UserTenantRole.objects.create(
+            user=supervisor,
+            tenant=self.tenant,
+            role=RoleChoices.SUPERVISOR,
+        )
+        UserPropertyPermission.objects.create(
+            user=supervisor,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+            can_schedule=True,
+        )
+        future_area = Area.objects.create(
+            tenant=self.tenant,
+            property=self.property,
+            name="Área futura",
+        )
+
+        self.assertTrue(
+            PermissionService.user_can_area_view(supervisor, self.tenant, self.property, future_area)
+        )
+        self.assertTrue(
+            PermissionService.user_can_area_schedule(supervisor, self.tenant, self.property, future_area)
+        )
+
+    def test_admin_is_restricted_to_explicitly_selected_properties(self):
+        admin = User.objects.create_user(email="admin-one-property@pariwana.test", password="StrongPass123")
+        UserTenantRole.objects.create(
+            user=admin,
+            tenant=self.tenant,
+            role=RoleChoices.ADMIN,
+            all_properties_access=False,
+        )
+        UserPropertyPermission.objects.create(
+            user=admin,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+        )
+
+        self.assertTrue(PermissionService.user_can_property_action(admin, self.tenant, self.property, "can_manage_users"))
+        self.assertFalse(
+            PermissionService.user_can_property_action(admin, self.tenant, self.property_2, "can_manage_users")
+        )
+
 
 class ApiPermissionTests(TestCase):
     def setUp(self):
