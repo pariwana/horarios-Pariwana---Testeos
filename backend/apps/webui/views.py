@@ -397,15 +397,12 @@ def _build_nav_items(user, tenant, property_obj, current_path="/app/", can_switc
 
     items = [nav_item("Inicio", "/app/")]
     administration_items = []
+    advanced_administration_items = []
     if PermissionService.is_super_admin(user):
-        administration_items.append(nav_item("Tenants", "/app/tenants/"))
-        administration_items.append(nav_item("Modulos", "/app/modules/"))
-        administration_items.append(nav_item("Soporte", "/app/support/"))
-        administration_items.append(nav_item("Auditoria global", "/app/audit-global/"))
-    if tenant is None:
-        if administration_items:
-            items.append({"label": "Administracion", "children": administration_items, "active": any(i["active"] for i in administration_items)})
-        return items
+        advanced_administration_items.append(nav_item("Tenants", "/app/tenants/"))
+        advanced_administration_items.append(nav_item("Modulos", "/app/modules/"))
+        advanced_administration_items.append(nav_item("Soporte", "/app/support/"))
+        advanced_administration_items.append(nav_item("Auditoria global", "/app/audit-global/"))
 
     if _can_nav_module(user, tenant, property_obj, "scheduling", "can_schedule"):
         items.append(nav_item("Asignar", "/app/scheduling/"))
@@ -435,18 +432,26 @@ def _build_nav_items(user, tenant, property_obj, current_path="/app/", can_switc
     if _can_nav_module(user, tenant, property_obj, "users_permissions", "can_manage_users"):
         administration_items.append(nav_item("Roles y permisos", "/app/users-permissions/"))
     if _can_nav_module(user, tenant, property_obj, "backup", roles=["admin"]):
-        administration_items.append(nav_item("Backup JSON", "/app/backup/"))
+        advanced_administration_items.append(nav_item("Backup JSON", "/app/backup/"))
     if _can_nav_module(user, tenant, property_obj, "month_closure", roles=["admin"]):
         administration_items.append(nav_item("Cierre de mes", "/app/month-closure/"))
     if _can_nav_module(user, tenant, property_obj, "audit", roles=["admin"]):
-        administration_items.append(nav_item("Auditoria", "/app/audit/"))
+        advanced_administration_items.append(nav_item("Auditoria", "/app/audit/"))
     if (
         _can_nav_module(user, tenant, property_obj, "buk_preview", "can_view_reports")
         or _can_nav_module(user, tenant, property_obj, "buk_preview", "can_export_buk")
     ):
         items.append(nav_item("Reporte BUK", "/app/buk-report/"))
-    if can_switch_tenant:
+    if can_switch_tenant and tenant is not None:
         administration_items.append({"label": "Cambiar organizacion", "context_switcher": True, "active": False})
+    if advanced_administration_items:
+        administration_items.append({
+            "label": "Administracion avanzada",
+            "children": advanced_administration_items,
+            "collapsible": True,
+            "id": "advanced-administration-nav",
+            "active": any(i["active"] for i in advanced_administration_items),
+        })
     if administration_items:
         items.append({"label": "Administracion", "children": administration_items, "active": any(i["active"] for i in administration_items)})
     return items

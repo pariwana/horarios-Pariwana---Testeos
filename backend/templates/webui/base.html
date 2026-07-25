@@ -43,6 +43,9 @@
     .nav-group[open] summary { background: #111827; }
     .nav-group.active > summary { background: var(--accent); color: #ffffff; font-weight: 700; }
     .nav-group a { margin-left: 10px; padding: 8px 10px; color: #cbd5e1; }
+    .nav-group--nested { margin: 2px 0 4px 6px; }
+    .nav-group--nested > summary { padding: 8px 10px; font-size: 13px; }
+    .nav-group--nested > div { min-width: 0; }
     .nav-context-switcher { margin: 4px 10px 8px; }
     .nav-context-switcher label { color: #cbd5e1; }
     .nav-context-switcher select { width: 100%; min-width: 0; }
@@ -132,6 +135,8 @@
       .nav-group a { margin-left: 0; }
       .nav-group[open] { display: grid; gap: 4px; }
       .nav-group[open] a { margin-left: 10px; }
+      .nav-group--nested { margin-left: 0; }
+      .nav-group--nested[open] a { margin-left: 10px; }
       .topbar { align-items: stretch; }
       .grid-2 { grid-template-columns: 1fr; }
       .ops-layout { grid-template-columns: 1fr; }
@@ -196,7 +201,16 @@
             <details class="nav-group {% if item.active %}active{% endif %}" {% if item.active %}open{% endif %}>
               <summary>{{ item.label }}</summary>
               {% for child in item.children %}
-                {% if child.context_switcher %}
+                {% if child.children %}
+                  <details class="nav-group nav-group--nested" id="{{ child.id }}">
+                    <summary aria-expanded="false" aria-controls="{{ child.id }}-links">{{ child.label }}</summary>
+                    <div id="{{ child.id }}-links">
+                      {% for nested_child in child.children %}
+                        <a href="{{ nested_child.url }}" class="{% if nested_child.active %}active{% endif %}">{{ nested_child.label }}</a>
+                      {% endfor %}
+                    </div>
+                  </details>
+                {% elif child.context_switcher %}
                   <form method="post" action="/app/context/" class="nav-context-switcher">
                     {% csrf_token %}
                     <input type="hidden" name="next" value="{{ request.path }}">
@@ -316,6 +330,13 @@
           menuToggle.setAttribute("aria-label", isOpen ? "Cerrar menu" : "Abrir menu");
         });
       }
+      document.querySelectorAll("details.nav-group--nested").forEach(function (group) {
+        var summary = group.querySelector(":scope > summary");
+        if (!summary) return;
+        group.addEventListener("toggle", function () {
+          summary.setAttribute("aria-expanded", group.open ? "true" : "false");
+        });
+      });
     })();
   </script>
 </body>
