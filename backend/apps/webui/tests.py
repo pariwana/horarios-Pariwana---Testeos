@@ -100,6 +100,9 @@ class WebUiGlobalContextSelectorTests(TestCase):
         self.assertIn('<span class="context-value">Sede autorizada</span>', content)
         self.assertIn('<aside class="sidebar sidebar--single-property" id="app-sidebar">', content)
         self.assertIn('<div class="nav-account">', content)
+        self.assertIn('class="topbar-user-actions"', content)
+        self.assertIn('class="topbar-user-name"', content)
+        self.assertContains(response, "Salir")
         self.assertNotIn('class="topbar-user-label"', content)
         self.assertNotIn('name="tenant_id" value="%s"' % self.tenant.id, content)
         self.assertNotContains(response, "Sesion Soporte")
@@ -7386,6 +7389,69 @@ class WebUiUsersPermissionsTests(TestCase):
             name="Área futura Lima",
         )
         self.assertTrue(PermissionService.user_can_area_view(target, self.tenant, self.property_2, future_area))
+
+    def test_full_page_all_areas_ignores_manipulated_specific_area_ids(self):
+        target = User.objects.create_user(email="all-areas-post@pariwana.test", password="StrongPass123")
+        profile = RoleProfileService.ensure_defaults(self.tenant)[1]
+        UserTenantRole.objects.create(
+            user=target,
+            tenant=self.tenant,
+            role=RoleChoices.OPERATOR,
+            role_profile=profile,
+        )
+        UserPropertyPermission.objects.create(
+            user=target,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+        )
+        self._activate_context()
+
+        response = self.client.post(
+            reverse("webui-user-permissions-edit", args=[target.id]),
+            {
+                "role_profile_id": str(profile.id),
+                "property_ids": [str(self.property.id)],
+                "permissions_present": "1",
+                f"area_scope_{self.property.id}": "all",
+                f"area_ids_{self.property.id}": [str(self.area_1.id)],
+            },
+        )
+
+        self.assertRedirects(response, reverse("webui-users-permissions"))
+        self.assertFalse(UserAreaPermission.objects.filter(user=target, tenant=self.tenant).exists())
+
+    def test_full_page_rejects_invalid_manipulated_area_scope(self):
+        target = User.objects.create_user(email="invalid-area-scope@pariwana.test", password="StrongPass123")
+        profile = RoleProfileService.ensure_defaults(self.tenant)[1]
+        UserTenantRole.objects.create(
+            user=target,
+            tenant=self.tenant,
+            role=RoleChoices.OPERATOR,
+            role_profile=profile,
+        )
+        UserPropertyPermission.objects.create(
+            user=target,
+            tenant=self.tenant,
+            property=self.property,
+            can_access=True,
+        )
+        self._activate_context()
+
+        response = self.client.post(
+            reverse("webui-user-permissions-edit", args=[target.id]),
+            {
+                "role_profile_id": str(profile.id),
+                "property_ids": [str(self.property.id)],
+                "permissions_present": "1",
+                f"area_scope_{self.property.id}": "alterado",
+                f"area_ids_{self.property.id}": [str(self.area_1.id)],
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Selecciona un alcance de áreas válido.")
+        self.assertFalse(UserAreaPermission.objects.filter(user=target, tenant=self.tenant).exists())
 
     def test_lima_admin_cannot_view_edit_or_assign_cusco_scope(self):
         limited_admin = User.objects.create_user(email="lima-admin@pariwana.test", password="StrongPass123")
