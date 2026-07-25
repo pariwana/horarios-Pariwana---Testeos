@@ -2,11 +2,84 @@
 {% block title %}Roles y permisos - Pariwana Scheduler{% endblock %}
 {% block content %}
   <style>
+    .roles-permissions-panel {
+      overflow: visible;
+    }
+    .roles-permissions-table {
+      table-layout: fixed;
+    }
+    .roles-permissions-table th,
+    .roles-permissions-table td {
+      vertical-align: middle;
+    }
+    .roles-permissions-table .user-column { width: 19%; }
+    .roles-permissions-table .role-column { width: 13%; }
+    .roles-permissions-table .scope-column { width: 14%; }
+    .roles-permissions-table .permissions-column { width: 23%; }
+    .roles-permissions-table .areas-column { width: 15%; }
+    .roles-permissions-table .status-column { width: 7%; }
+    .roles-permissions-table .actions-column { width: 9%; }
+    .roles-permissions-table .icon-actions { flex-wrap: nowrap; }
+    .roles-permissions-table .row-title,
+    .roles-permissions-table .row-subtitle,
+    .role-summary-list {
+      overflow-wrap: anywhere;
+    }
+    .permission-chips,
+    .area-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      align-items: center;
+    }
+    .role-summary {
+      position: relative;
+      display: inline-block;
+    }
+    .role-summary summary {
+      cursor: pointer;
+      list-style: none;
+      color: #115e59;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .role-summary summary::-webkit-details-marker { display: none; }
+    .role-summary summary:focus-visible {
+      outline: 3px solid #5eead4;
+      outline-offset: 3px;
+      border-radius: 3px;
+    }
+    .role-summary-list {
+      position: absolute;
+      z-index: 2;
+      top: calc(100% + 6px);
+      right: 0;
+      width: max-content;
+      max-width: min(280px, calc(100vw - 48px));
+      margin: 0;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      box-shadow: 0 8px 20px rgba(15, 23, 42, 0.16);
+      color: var(--ink);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+    .role-summary-list span { display: block; }
+    .roles-permissions-table tr.user-inactive td,
+    .mobile-card.user-inactive {
+      background: #f9fafb;
+      color: #4b5563;
+    }
+    .roles-permissions-table tr.user-inactive .row-title,
+    .mobile-card.user-inactive .row-title { color: #4b5563; }
     .mobile-role-create-action {
       display: none;
       margin-bottom: 12px;
     }
-    @media (max-width: 640px) {
+    @media (max-width: 768px) {
       .desktop-role-create-action {
         display: none;
       }
@@ -16,6 +89,13 @@
       .mobile-role-create-action button {
         width: 100%;
       }
+      .roles-permissions-table { display: none; }
+      .roles-permissions-panel { overflow: hidden; }
+      .roles-permissions-panel .mobile-cards { display: grid; gap: 12px; }
+      .roles-permissions-panel .mobile-card { gap: 12px; padding: 14px; }
+      .roles-permissions-panel .mobile-card .icon-actions { justify-content: flex-start; }
+      .roles-permissions-panel .icon-button { width: 44px; height: 44px; min-width: 44px; }
+      .role-summary-list { position: static; width: 100%; max-width: none; margin-top: 6px; }
     }
   </style>
   <div class="page-header">
@@ -29,49 +109,60 @@
     </div>
   </div>
 
-  <section class="panel ops-list" style="margin-bottom: 12px;">
+  <section class="panel ops-list roles-permissions-panel" style="margin-bottom: 12px;">
     <h3 style="margin-top: 0;">Usuarios con permisos</h3>
     {% if rows %}
-      <table class="ops-table desktop-table">
+      <table class="ops-table desktop-table roles-permissions-table">
         <thead>
           <tr>
-            <th>Usuario</th>
-            <th>Tipo de usuario</th>
-            <th>Permisos</th>
-            <th>Areas</th>
-            <th>Estado</th>
-            <th>Acciones</th>
+            <th class="user-column">Usuario</th>
+            <th class="role-column">Tipo de usuario</th>
+            <th class="scope-column">Alcance</th>
+            <th class="permissions-column">Permisos</th>
+            <th class="areas-column">Áreas</th>
+            <th class="status-column">Estado</th>
+            <th class="actions-column">Acciones</th>
           </tr>
         </thead>
         <tbody>
           {% for row in rows %}
-            <tr>
+            <tr{% if not row.user.is_active %} class="user-inactive"{% endif %}>
               <td>
-                <div class="row-title">{{ row.user.email }}</div>
-                <div class="row-subtitle">{{ row.user.first_name }} {{ row.user.last_name }}</div>
+                <div class="row-title">{% if row.user.first_name or row.user.last_name %}{{ row.user.first_name }} {{ row.user.last_name }}{% else %}{{ row.user.email }}{% endif %}</div>
+                <div class="row-subtitle">{{ row.user.email }}</div>
+              </td>
+              <td>{{ row.role_profile_name|default:row.role_label|default:"-" }}</td>
+              <td>
+                {% if row.all_properties_access %}
+                  <span class="badge">Todas las sedes</span>
+                {% else %}
+                  <div class="permission-chips">
+                    {% for property_name in row.selected_property_names %}<span class="badge">{{ property_name }}</span>{% empty %}<span class="muted">Sin sede</span>{% endfor %}
+                  </div>
+                {% endif %}
               </td>
               <td>
-                {{ row.role_profile_name|default:row.role_label|default:"-" }}
-                {% if row.all_properties_access %}<div class="row-subtitle">Todas las sedes</div>{% endif %}
-              </td>
-              <td>
-                <div class="mobile-card-meta">
-                  {% if row.all_properties_access %}<span class="badge">Todas las sedes</span>{% endif %}
-                  {% if not row.all_properties_access %}
-                    {% for property_name in row.selected_property_names %}<span class="badge">{{ property_name }}</span>{% endfor %}
+                <div class="permission-chips">
+                  {% for permission_name in row.permission_names %}{% if forloop.counter <= 3 %}<span class="badge">{{ permission_name }}</span>{% endif %}{% empty %}<span class="muted">Sin permisos</span>{% endfor %}
+                  {% if row.permission_names|length > 3 %}
+                    <details class="role-summary">
+                      <summary aria-label="Ver todos los permisos">+{{ row.permission_names|length|add:"-3" }} más</summary>
+                      <div class="role-summary-list">{% for permission_name in row.permission_names %}<span>{{ permission_name }}</span>{% endfor %}</div>
+                    </details>
                   {% endif %}
-                  {% if row.permission.can_schedule %}<span class="badge">Horarios</span>{% endif %}
-                  {% if row.permission.can_export_buk %}<span class="badge">BUK</span>{% endif %}
-                  {% if row.permission.can_manage_workers %}<span class="badge">Trabajadores</span>{% endif %}
-                  {% if row.permission.can_manage_shifts %}<span class="badge">Turnos</span>{% endif %}
-                  {% if row.permission.can_manage_users %}<span class="badge">Usuarios</span>{% endif %}
                 </div>
               </td>
               <td>
-                {% if row.selected_area_ids %}
-                  {% for area in areas %}
-                    {% if area.id in row.selected_area_ids %}<div>{{ area.name }}</div>{% endif %}
-                  {% endfor %}
+                {% if row.selected_area_names %}
+                  <div class="area-chips">
+                    {% for area_name in row.selected_area_names %}{% if forloop.counter <= 2 %}<span class="badge">{{ area_name }}</span>{% endif %}{% endfor %}
+                    {% if row.selected_area_names|length > 2 %}
+                      <details class="role-summary">
+                        <summary aria-label="Ver todas las áreas">+{{ row.selected_area_names|length|add:"-2" }} más</summary>
+                        <div class="role-summary-list">{% for area_name in row.selected_area_names %}<span>{{ area_name }}</span>{% endfor %}</div>
+                      </details>
+                    {% endif %}
+                  </div>
                 {% else %}
                   <span class="muted">Todas</span>
                 {% endif %}
@@ -79,13 +170,13 @@
               <td>{% if row.user.is_active %}<span class="badge badge-ok">Activo</span>{% else %}<span class="badge badge-muted">Inactivo</span>{% endif %}</td>
               <td>
                 <span class="icon-actions">
-                  <button class="icon-button" type="button" data-open-modal="user-edit-modal-{{ row.user.id }}" title="Editar permisos">&#9998;</button>
+                  <button class="icon-button" type="button" data-open-modal="user-edit-modal-{{ row.user.id }}" title="Editar permisos" aria-label="Editar permisos de {{ row.user.email }}">&#9998;</button>
                   {% if row.user.is_active %}
-                    <button class="icon-button" type="button" data-open-modal="user-password-modal-{{ row.user.id }}" title="Restablecer contrasena">&#8635;</button>
-                    <button class="icon-button danger" type="button" data-open-modal="user-delete-modal-{{ row.user.id }}" title="Desactivar usuario">&#10005;</button>
+                    <button class="icon-button" type="button" data-open-modal="user-password-modal-{{ row.user.id }}" title="Restablecer contrasena" aria-label="Restablecer contraseña de {{ row.user.email }}">&#8635;</button>
+                    <button class="icon-button danger" type="button" data-open-modal="user-delete-modal-{{ row.user.id }}" title="Desactivar usuario" aria-label="Desactivar usuario {{ row.user.email }}">&#10005;</button>
                   {% else %}
-                    <button class="icon-button" type="button" data-open-modal="user-reactivate-modal-{{ row.user.id }}" title="Reactivar usuario">&#8634;</button>
-                    <button class="icon-button danger" type="button" data-open-modal="user-destroy-modal-{{ row.user.id }}" title="Borrar definitivamente">&#128465;</button>
+                    <button class="icon-button" type="button" data-open-modal="user-reactivate-modal-{{ row.user.id }}" title="Reactivar usuario" aria-label="Reactivar usuario {{ row.user.email }}">&#8634;</button>
+                    <button class="icon-button danger" type="button" data-open-modal="user-destroy-modal-{{ row.user.id }}" title="Borrar definitivamente" aria-label="Borrar definitivamente a {{ row.user.email }}">&#128465;</button>
                   {% endif %}
                 </span>
               </td>
@@ -96,33 +187,33 @@
 
       <div class="mobile-cards">
         {% for row in rows %}
-          <article class="mobile-card">
+          <article class="mobile-card{% if not row.user.is_active %} user-inactive{% endif %}">
             <div class="mobile-card-header">
               <div>
-                <div class="row-title">{{ row.user.email }}</div>
-                <div class="row-subtitle">Tipo: {{ row.role_profile_name|default:row.role_label|default:"-" }}</div>
-                {% if row.all_properties_access %}<div class="row-subtitle">Todas las sedes</div>{% endif %}
+                <div class="row-title">{% if row.user.first_name or row.user.last_name %}{{ row.user.first_name }} {{ row.user.last_name }}{% else %}{{ row.user.email }}{% endif %}</div>
+                <div class="row-subtitle">{{ row.user.email }}</div>
               </div>
               {% if row.user.is_active %}<span class="badge badge-ok">Activo</span>{% else %}<span class="badge badge-muted">Inactivo</span>{% endif %}
             </div>
-            <div class="mobile-card-meta">
-              {% if row.all_properties_access %}<span class="badge">Todas las sedes</span>{% endif %}
-              {% if not row.all_properties_access %}
-                {% for property_name in row.selected_property_names %}<span class="badge">{{ property_name }}</span>{% endfor %}
-              {% endif %}
-              {% if row.permission.can_schedule %}<span class="badge">Horarios</span>{% endif %}
-              {% if row.permission.can_export_buk %}<span class="badge">BUK</span>{% endif %}
-              {% if row.permission.can_manage_workers %}<span class="badge">Trabajadores</span>{% endif %}
-              {% if row.selected_area_ids %}<span class="badge">Areas filtradas</span>{% else %}<span class="badge">Todas las areas</span>{% endif %}
+            <div class="mobile-card-meta"><strong>Tipo:</strong> {{ row.role_profile_name|default:row.role_label|default:"-" }}</div>
+            <div class="mobile-card-meta"><strong>Alcance:</strong> {% if row.all_properties_access %}<span class="badge">Todas las sedes</span>{% else %}{% for property_name in row.selected_property_names %}<span class="badge">{{ property_name }}</span>{% empty %}<span class="muted">Sin sede</span>{% endfor %}{% endif %}</div>
+            <div class="mobile-card-meta permission-chips">
+              <strong>Permisos:</strong>
+              {% for permission_name in row.permission_names %}{% if forloop.counter <= 3 %}<span class="badge">{{ permission_name }}</span>{% endif %}{% empty %}<span class="muted">Sin permisos</span>{% endfor %}
+              {% if row.permission_names|length > 3 %}<details class="role-summary"><summary aria-label="Ver todos los permisos">+{{ row.permission_names|length|add:"-3" }} más</summary><div class="role-summary-list">{% for permission_name in row.permission_names %}<span>{{ permission_name }}</span>{% endfor %}</div></details>{% endif %}
+            </div>
+            <div class="mobile-card-meta area-chips">
+              <strong>Áreas:</strong>
+              {% if row.selected_area_names %}{% for area_name in row.selected_area_names %}{% if forloop.counter <= 2 %}<span class="badge">{{ area_name }}</span>{% endif %}{% endfor %}{% if row.selected_area_names|length > 2 %}<details class="role-summary"><summary aria-label="Ver todas las áreas">+{{ row.selected_area_names|length|add:"-2" }} más</summary><div class="role-summary-list">{% for area_name in row.selected_area_names %}<span>{{ area_name }}</span>{% endfor %}</div></details>{% endif %}{% else %}<span class="badge">Todas</span>{% endif %}
             </div>
             <div class="icon-actions">
-              <button class="icon-button" type="button" data-open-modal="user-edit-modal-{{ row.user.id }}" title="Editar permisos">&#9998;</button>
+              <button class="icon-button" type="button" data-open-modal="user-edit-modal-{{ row.user.id }}" title="Editar permisos" aria-label="Editar permisos de {{ row.user.email }}">&#9998;</button>
               {% if row.user.is_active %}
-                <button class="icon-button" type="button" data-open-modal="user-password-modal-{{ row.user.id }}" title="Restablecer contrasena">&#8635;</button>
-                <button class="icon-button danger" type="button" data-open-modal="user-delete-modal-{{ row.user.id }}" title="Desactivar usuario">&#10005;</button>
+                <button class="icon-button" type="button" data-open-modal="user-password-modal-{{ row.user.id }}" title="Restablecer contrasena" aria-label="Restablecer contraseña de {{ row.user.email }}">&#8635;</button>
+                <button class="icon-button danger" type="button" data-open-modal="user-delete-modal-{{ row.user.id }}" title="Desactivar usuario" aria-label="Desactivar usuario {{ row.user.email }}">&#10005;</button>
               {% else %}
-                <button class="icon-button" type="button" data-open-modal="user-reactivate-modal-{{ row.user.id }}" title="Reactivar usuario">&#8634;</button>
-                <button class="icon-button danger" type="button" data-open-modal="user-destroy-modal-{{ row.user.id }}" title="Borrar definitivamente">&#128465;</button>
+                <button class="icon-button" type="button" data-open-modal="user-reactivate-modal-{{ row.user.id }}" title="Reactivar usuario" aria-label="Reactivar usuario {{ row.user.email }}">&#8634;</button>
+                <button class="icon-button danger" type="button" data-open-modal="user-destroy-modal-{{ row.user.id }}" title="Borrar definitivamente" aria-label="Borrar definitivamente a {{ row.user.email }}">&#128465;</button>
               {% endif %}
             </div>
           </article>
