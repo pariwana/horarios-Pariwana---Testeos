@@ -1,0 +1,253 @@
+{% extends "webui/base.html" %}
+{% block title %}{% if target_user %}Editar usuario{% else %}Crear usuario{% endif %} - Pariwana Scheduler{% endblock %}
+{% block content %}
+<style>
+  .user-access-page { max-width: 980px; margin: 0 auto; padding-bottom: 88px; }
+  .user-access-back { display: inline-flex; min-height: 44px; align-items: center; color: #0f766e; font-weight: 700; text-decoration: none; }
+  .user-access-grid { display: grid; gap: 16px; }
+  .user-access-card { padding: 20px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+  .user-access-card h2 { margin: 0 0 6px; font-size: 20px; }
+  .user-access-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+  .user-access-fields .wide { grid-column: 1 / -1; }
+  .user-access-fields input,
+  .user-access-fields select { width: 100%; min-height: 44px; }
+  .permission-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .touch-option { display: flex; min-height: 44px; align-items: center; gap: 10px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 8px; }
+  .touch-option input { width: 20px; height: 20px; flex: 0 0 auto; }
+  .property-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+  .property-card { border: 1px solid var(--line); border-radius: 10px; padding: 14px; min-width: 0; }
+  .property-card.is-selected { border-color: #0f766e; box-shadow: 0 0 0 2px rgba(15, 118, 110, .12); }
+  .property-title { font-weight: 800; }
+  .property-scope { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .area-list { display: grid; gap: 8px; margin-top: 8px; }
+  .removal-warning { display: none; margin: 8px 0 0; color: #9a3412; font-size: 13px; font-weight: 700; }
+  .property-card.was-selected:not(.is-selected) .removal-warning { display: block; }
+  .access-summary { margin: 0; padding-left: 20px; line-height: 1.7; overflow-wrap: anywhere; }
+  .sticky-actions { position: fixed; z-index: 4; left: calc(220px + (100vw - 220px) / 2); bottom: 12px; width: min(calc(100vw - 252px), 980px); transform: translateX(-50%); display: flex; justify-content: flex-end; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.96); box-shadow: 0 -6px 18px rgba(15,23,42,.08); }
+  .sticky-actions a,
+  .sticky-actions button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
+  @media (max-width: 700px) {
+    .user-access-page { width: 100%; padding-bottom: 140px; }
+    .user-access-card { padding: 15px; border-radius: 10px; }
+    .user-access-fields,
+    .permission-grid,
+    .property-grid { grid-template-columns: 1fr; }
+    .sticky-actions { flex-direction: column-reverse; }
+    .sticky-actions a,
+    .sticky-actions button { width: 100%; }
+  }
+  @media (max-width: 980px) {
+    .sticky-actions { left: 50%; width: calc(100vw - 24px); }
+  }
+</style>
+
+<main class="user-access-page">
+  <a class="user-access-back" href="{% url 'webui-users-permissions' %}">← Volver a Roles y permisos</a>
+  <div class="page-header">
+    <div>
+      <h1 class="section-title">{% if target_user %}Editar usuario{% else %}Crear usuario{% endif %}</h1>
+      <p class="compact-note">
+        {% if target_user %}{{ target_user.first_name }} {{ target_user.last_name }} · {{ target_user.email }}{% else %}Configura sus datos, tipo, sedes y alcance.{% endif %}
+      </p>
+    </div>
+  </div>
+
+  <form method="post" id="user-access-form" class="user-access-grid">
+    {% csrf_token %}
+    <input type="hidden" name="permissions_present" value="1">
+
+    <section class="user-access-card">
+      <h2>1. Datos del usuario</h2>
+      <p class="compact-note">Información visible para identificar la cuenta.</p>
+      <div class="user-access-fields">
+        <label class="wide">Correo
+          <input type="email" name="email" value="{% if target_user %}{{ target_user.email }}{% else %}{{ request.POST.email|default:'' }}{% endif %}" {% if target_user %}readonly{% else %}required autocomplete="email"{% endif %}>
+        </label>
+        <label>Nombres
+          <input type="text" name="first_name" value="{% if target_user %}{{ target_user.first_name }}{% else %}{{ request.POST.first_name|default:'' }}{% endif %}" autocomplete="given-name">
+        </label>
+        <label>Apellidos
+          <input type="text" name="last_name" value="{% if target_user %}{{ target_user.last_name }}{% else %}{{ request.POST.last_name|default:'' }}{% endif %}" autocomplete="family-name">
+        </label>
+        {% if target_user %}
+          <div class="wide"><strong>Estado:</strong> {% if target_user.is_active %}Activo{% else %}Inactivo{% endif %}</div>
+        {% else %}
+          <label class="wide">Contraseña inicial
+            <input type="password" name="password" required autocomplete="new-password">
+          </label>
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="user-access-card">
+      <h2>2. Tipo de usuario</h2>
+      <p class="compact-note">Al cambiar el tipo, las casillas se actualizan con sus permisos sugeridos.</p>
+      <label>Tipo
+        <select name="role_profile_id" id="role-profile" required>
+          {% for profile in role_profiles %}
+            <option value="{{ profile.id }}" {% if profile.id == selected_role_profile_id %}selected{% endif %}>{{ profile.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </section>
+
+    <section class="user-access-card">
+      <h2>3. Sedes permitidas</h2>
+      <p class="compact-note">Selecciona una o varias. El mismo tipo y los mismos permisos se aplicarán a todas.</p>
+      <div class="property-grid">
+        {% for card in property_cards %}
+          <article class="property-card{% if card.selected %} is-selected was-selected{% endif %}" data-property-card="{{ card.property.id }}">
+            <label class="touch-option property-title">
+              <input type="checkbox" name="property_ids" value="{{ card.property.id }}" data-property-toggle="{{ card.property.id }}" {% if card.selected %}checked{% endif %}>
+              {{ card.property.name }}
+            </label>
+            <p class="removal-warning">Se eliminarán también sus permisos y áreas.</p>
+            <div class="property-scope" data-property-scope="{{ card.property.id }}" {% if not card.selected %}hidden{% endif %}>
+              <strong>Áreas de esta sede</strong>
+              <label class="touch-option">
+                <input type="radio" name="area_scope_{{ card.property.id }}" value="all" {% if card.scope_mode == "all" %}checked{% endif %}>
+                <span><strong>Todas las áreas</strong><br><small>Incluye automáticamente las áreas futuras.</small></span>
+              </label>
+              <label class="touch-option">
+                <input type="radio" name="area_scope_{{ card.property.id }}" value="specific" {% if card.scope_mode == "specific" %}checked{% endif %}>
+                Solo áreas específicas
+              </label>
+              <div class="area-list" data-area-list="{{ card.property.id }}" {% if card.scope_mode != "specific" %}hidden{% endif %}>
+                {% for area in card.areas %}
+                  <label class="touch-option">
+                    <input type="checkbox" name="area_ids_{{ card.property.id }}" value="{{ area.id }}" {% if area.id in card.selected_area_ids %}checked{% endif %}>
+                    {{ area.name }}
+                  </label>
+                {% empty %}
+                  <p class="compact-note">Esta sede todavía no tiene áreas activas.</p>
+                {% endfor %}
+              </div>
+            </div>
+          </article>
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="user-access-card">
+      <h2>4. Permisos</h2>
+      <p class="compact-note">Este único conjunto se aplicará por igual a todas las sedes seleccionadas.</p>
+      <div class="permission-grid">
+        <label class="touch-option"><input type="checkbox" name="can_access" checked disabled> Acceder a la sede</label>
+        <label class="touch-option"><input type="checkbox" name="can_schedule" {% if permission_payload.can_schedule %}checked{% endif %}> Programar horarios</label>
+        <label class="touch-option"><input type="checkbox" name="can_export_buk" {% if permission_payload.can_export_buk %}checked{% endif %}> Exportar BUK</label>
+        <label class="touch-option"><input type="checkbox" name="can_manage_workers" {% if permission_payload.can_manage_workers %}checked{% endif %}> Gestionar trabajadores</label>
+        <label class="touch-option"><input type="checkbox" name="can_manage_shifts" {% if permission_payload.can_manage_shifts %}checked{% endif %}> Gestionar turnos</label>
+        <label class="touch-option"><input type="checkbox" name="can_manage_areas" {% if permission_payload.can_manage_areas %}checked{% endif %}> Gestionar áreas</label>
+        <label class="touch-option"><input type="checkbox" name="can_manage_users" {% if permission_payload.can_manage_users %}checked{% endif %}> Gestionar usuarios</label>
+        <label class="touch-option"><input type="checkbox" name="can_view_reports" {% if permission_payload.can_view_reports %}checked{% endif %}> Ver reportes</label>
+        <label class="touch-option"><input type="checkbox" name="can_use_control" {% if permission_payload.can_use_control %}checked{% endif %}> Usar control</label>
+      </div>
+    </section>
+
+    <section class="user-access-card">
+      <h2>5. Resumen antes de guardar</h2>
+      <ul class="access-summary" id="access-summary" aria-live="polite"></ul>
+    </section>
+
+    <div class="sticky-actions">
+      <a class="button" href="{% url 'webui-users-permissions' %}">Cancelar</a>
+      <button class="primary" type="submit">{% if target_user %}Guardar cambios{% else %}Crear usuario{% endif %}</button>
+    </div>
+  </form>
+</main>
+
+{{ role_profile_defaults|json_script:"role-profile-defaults" }}
+<script>
+(() => {
+  const form = document.getElementById("user-access-form");
+  const roleSelect = document.getElementById("role-profile");
+  const defaults = JSON.parse(document.getElementById("role-profile-defaults").textContent);
+  const permissionNames = {
+    can_schedule: "Horarios", can_export_buk: "BUK", can_manage_workers: "Trabajadores",
+    can_manage_shifts: "Turnos", can_manage_areas: "Áreas", can_manage_users: "Usuarios",
+    can_view_reports: "Reportes", can_use_control: "Control"
+  };
+
+  function updateProperties() {
+    document.querySelectorAll("[data-property-toggle]").forEach(toggle => {
+      const id = toggle.dataset.propertyToggle;
+      const card = document.querySelector(`[data-property-card="${id}"]`);
+      const scope = document.querySelector(`[data-property-scope="${id}"]`);
+      card.classList.toggle("is-selected", toggle.checked);
+      scope.hidden = !toggle.checked;
+    });
+    updateSummary();
+  }
+
+  function updateAreaLists() {
+    document.querySelectorAll('[data-area-list]').forEach(list => {
+      const id = list.dataset.areaList;
+      const specific = form.querySelector(`input[name="area_scope_${id}"][value="specific"]`);
+      list.hidden = !specific.checked;
+    });
+    updateSummary();
+  }
+
+  function applyRoleDefaults() {
+    const profileDefaults = defaults[roleSelect.value] || {};
+    Object.keys(permissionNames).forEach(name => {
+      const input = form.elements[name];
+      if (input) input.checked = Boolean(profileDefaults[name]);
+    });
+    updateSummary();
+  }
+
+  function updateSummary() {
+    const profile = roleSelect.options[roleSelect.selectedIndex];
+    const properties = [...document.querySelectorAll("[data-property-toggle]:checked")];
+    const permissions = Object.keys(permissionNames).filter(name => form.elements[name]?.checked).map(name => permissionNames[name]);
+    const areaSummaries = properties.map(toggle => {
+      const id = toggle.value;
+      const name = toggle.closest(".property-card").querySelector(".property-title").textContent.trim();
+      const mode = form.querySelector(`input[name="area_scope_${id}"]:checked`)?.value;
+      if (mode !== "specific") return `${name}: todas las áreas (incluye futuras)`;
+      const selected = [...form.querySelectorAll(`input[name="area_ids_${id}"]:checked`)].map(item => item.closest("label").textContent.trim());
+      return `${name}: ${selected.join(", ") || "sin áreas seleccionadas"}`;
+    });
+    const summary = document.getElementById("access-summary");
+    summary.replaceChildren();
+    [
+      ["Tipo", profile?.text || "Sin seleccionar"],
+      ["Sedes", properties.map(item => item.closest(".property-card").querySelector(".property-title").textContent.trim()).join(", ") || "Sin seleccionar"],
+      ["Permisos", permissions.join(", ") || "Solo acceso"],
+      ["Áreas", areaSummaries.join(" · ") || "Sin sedes"]
+    ].forEach(([label, value]) => {
+      const item = document.createElement("li");
+      const title = document.createElement("strong");
+      title.textContent = `${label}: `;
+      item.append(title, document.createTextNode(value));
+      summary.append(item);
+    });
+  }
+
+  roleSelect.addEventListener("change", applyRoleDefaults);
+  form.addEventListener("change", event => {
+    if (event.target.matches("[data-property-toggle]")) updateProperties();
+    else if (event.target.matches('input[type="radio"], input[type="checkbox"]')) updateAreaLists();
+  });
+  form.addEventListener("submit", event => {
+    if (!document.querySelector("[data-property-toggle]:checked")) {
+      event.preventDefault();
+      alert("Selecciona al menos una sede permitida.");
+      return;
+    }
+    const invalidSpecific = [...document.querySelectorAll("[data-property-toggle]:checked")].some(toggle => {
+      const id = toggle.value;
+      return form.querySelector(`input[name="area_scope_${id}"]:checked`)?.value === "specific"
+        && !form.querySelector(`input[name="area_ids_${id}"]:checked`);
+    });
+    if (invalidSpecific) {
+      event.preventDefault();
+      alert("Selecciona al menos un área en cada sede con alcance específico.");
+    }
+  });
+  updateProperties();
+  updateAreaLists();
+})();
+</script>
+{% endblock %}

@@ -21,6 +21,16 @@ urlpatterns = [
     path("app/shifts-auto/", views.auto_shifts_page, name="webui-auto-shifts"),
     path("app/special-states/", views.special_states_page, name="webui-special-states"),
     path("app/users-permissions/", views.users_permissions_page, name="webui-users-permissions"),
+    path(
+        "app/users-permissions/new/",
+        views.user_permissions_form_page,
+        name="webui-user-permissions-create",
+    ),
+    path(
+        "app/users-permissions/<int:user_id>/edit/",
+        views.user_permissions_form_page,
+        name="webui-user-permissions-edit",
+    ),
     path("app/imports/", views.imports_page, name="webui-imports"),
     path("app/imports/workers-template/", views.workers_template_download, name="webui-workers-template-download"),
     path("app/imports/shifts-template/", views.shifts_template_download, name="webui-shifts-template-download"),
