@@ -2574,13 +2574,15 @@ def scheduling_assign(request):
         property_obj,
         action="can_schedule",
     )
-    selected_area = Area.objects.filter(
-        tenant=tenant,
-        property=property_obj,
-        active=True,
-        id__in=allowed_area_ids,
-        id=area_value,
-    ).first()
+    selected_area = None
+    if area_value:
+        selected_area = Area.objects.filter(
+            tenant=tenant,
+            property=property_obj,
+            active=True,
+            id__in=allowed_area_ids,
+            id=area_value,
+        ).first()
     if selected_area is None:
         stored_area_ids = request.session.get("scheduling_selected_area_ids", {})
         selected_area_scope = f"{tenant.id}:{property_obj.id}"
