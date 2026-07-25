@@ -14,10 +14,11 @@ from openpyxl import Workbook
 
 from apps.audit.models import AuditLog
 from apps.buk_exports.models import BukExportLog, BukTemplateCompareLog
+from apps.buk_exports.services import BukExportService
 from apps.imports.models import ImportBatch, ImportPreviewRow
 from apps.month_closure.models import MonthClosure, MonthClosureStatus
 from apps.modules.models import ModuleActivation
-from apps.scheduling.models import ScheduleAssignment, SchedulePatternTemplate, ScheduleRangeTemplate
+from apps.scheduling.models import ScheduleAssignment, ScheduleAssignmentNote, SchedulePatternTemplate, ScheduleRangeTemplate
 from apps.tenants.models import Property, Tenant, TenantSupportAccessSession
 from apps.users.models import RoleChoices, RoleProfile, User, UserAreaPermission, UserPropertyPermission, UserTenantRole
 from apps.users.services import PermissionService, RoleProfileService
@@ -2809,6 +2810,134 @@ class WebUiSchedulingTests(TestCase):
                 date="2026-06-18",
             ).exists()
         )
+
+    def test_scheduling_note_can_be_created_edited_and_deleted(self):
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+        url = reverse("webui-scheduling-note")
+        payload = {"worker_id": self.worker.id, "work_date": "2026-06-18", "note": "Cubrir recepción al cierre."}
+
+        response = self.client.post(url, payload, HTTP_X_REQUESTED_WITH="XMLHttpRequest", HTTP_ACCEPT="application/json")
+        self.assertEqual(response.status_code, 200)
+        note = ScheduleAssignmentNote.objects.get(worker=self.worker, date="2026-06-18")
+        self.assertEqual(note.note, payload["note"])
+        self.assertEqual(note.updated_by, self.user)
+
+        payload["note"] = "Confirmar relevo antes de salir."
+        response = self.client.post(url, payload, HTTP_X_REQUESTED_WITH="XMLHttpRequest", HTTP_ACCEPT="application/json")
+        self.assertEqual(response.status_code, 200)
+        note.refresh_from_db()
+        self.assertEqual(note.note, payload["note"])
+        self.assertEqual(note.updated_by, self.user)
+
+        payload["note"] = ""
+        response = self.client.post(url, payload, HTTP_X_REQUESTED_WITH="XMLHttpRequest", HTTP_ACCEPT="application/json")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(ScheduleAssignmentNote.objects.filter(worker=self.worker, date="2026-06-18").exists())
+
+    def test_scheduling_note_rejects_more_than_250_characters(self):
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+
+        response = self.client.post(
+            reverse("webui-scheduling-note"),
+            {"worker_id": self.worker.id, "work_date": "2026-06-18", "note": "x" * 251},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+            HTTP_ACCEPT="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(ScheduleAssignmentNote.objects.filter(worker=self.worker, date="2026-06-18").exists())
+
+    def test_scheduling_note_rejects_invalid_scope_and_date(self):
+        other_tenant = Tenant.objects.create(name="Otro tenant", slug="otro-tenant-nota")
+        other_property = Property.objects.create(tenant=other_tenant, name="Otra sede", slug="otra-sede-nota")
+        other_area = Area.objects.create(tenant=other_tenant, property=other_property, name="Otra area")
+        foreign_worker = Worker.objects.create(
+            tenant=other_tenant, property=other_property, area=other_area,
+            document_number="88990011", first_name="Ana", last_name="Fuera", active=True,
+        )
+        restricted_area = Area.objects.create(tenant=self.tenant, property=self.property, name="Bar")
+        restricted_worker = Worker.objects.create(
+            tenant=self.tenant, property=self.property, area=restricted_area,
+            document_number="88990012", first_name="Beto", last_name="Restringido", active=True,
+        )
+        supervisor = self._create_area_supervisor("nota-area@pariwana.test", [self.area])
+        self.client.force_login(supervisor)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+        url = reverse("webui-scheduling-note")
+
+        foreign_response = self.client.post(url, {"worker_id": foreign_worker.id, "work_date": "2026-06-18", "note": "No permitida"}, HTTP_X_REQUESTED_WITH="XMLHttpRequest", HTTP_ACCEPT="application/json")
+        area_response = self.client.post(url, {"worker_id": restricted_worker.id, "work_date": "2026-06-18", "note": "No permitida"}, HTTP_X_REQUESTED_WITH="XMLHttpRequest", HTTP_ACCEPT="application/json")
+        date_response = self.client.post(url, {"worker_id": self.worker.id, "work_date": "fecha-invalida", "note": "No permitida"}, HTTP_X_REQUESTED_WITH="XMLHttpRequest", HTTP_ACCEPT="application/json")
+        missing_worker_response = self.client.post(url, {"worker_id": 999999, "work_date": "2026-06-18", "note": "No permitida"}, HTTP_X_REQUESTED_WITH="XMLHttpRequest", HTTP_ACCEPT="application/json")
+
+        self.assertEqual(foreign_response.status_code, 404)
+        self.assertEqual(area_response.status_code, 403)
+        self.assertEqual(date_response.status_code, 400)
+        self.assertEqual(missing_worker_response.status_code, 404)
+        self.assertFalse(ScheduleAssignmentNote.objects.exists())
+
+    def test_scheduling_note_is_preserved_when_assignment_changes_or_is_deleted(self):
+        ScheduleAssignment.objects.create(
+            tenant=self.tenant, property=self.property, worker=self.worker, date="2026-06-19", shift=self.shift
+        )
+        note = ScheduleAssignmentNote.objects.create(
+            tenant=self.tenant, property=self.property, worker=self.worker, date="2026-06-19", note="No modificar cobertura.", updated_by=self.user
+        )
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+
+        self.client.post(reverse("webui-scheduling-assign"), {"month": "2026-06", "worker_id": self.worker.id, "work_date": "2026-06-19", "assignment_value": f"state:{self.state.id}"})
+        self.client.post(reverse("webui-scheduling-assign"), {"month": "2026-06", "worker_id": self.worker.id, "work_date": "2026-06-19", "assignment_value": ""})
+
+        note.refresh_from_db()
+        self.assertEqual(note.note, "No modificar cobertura.")
+        self.assertFalse(ScheduleAssignment.objects.filter(worker=self.worker, date="2026-06-19").exists())
+
+    def test_scheduling_note_is_not_in_share_reports_or_control_output(self):
+        ScheduleAssignmentNote.objects.create(
+            tenant=self.tenant, property=self.property, worker=self.worker, date="2026-06-20", note="Solo para asignación.", updated_by=self.user
+        )
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+
+        share_response = self.client.get(reverse("webui-scheduling-share"))
+        report_response = self.client.get(
+            reverse("webui-scheduling-team-report-image-data"),
+            {"area_id": self.area.id, "date_from": "2026-06-20", "date_to": "2026-06-20"},
+        )
+        control_response = self.client.get(reverse("webui-control"))
+        self.assertNotContains(share_response, "Solo para asignación.")
+        self.assertNotContains(report_response, "Solo para asignación.")
+        self.assertNotContains(control_response, "Solo para asignación.")
+
+    def test_scheduling_note_is_not_in_buk_export(self):
+        ScheduleAssignmentNote.objects.create(
+            tenant=self.tenant, property=self.property, worker=self.worker, date="2026-06-20", note="No exportar esta nota.", updated_by=self.user
+        )
+
+        csv_text = BukExportService.generate_csv_text(
+            tenant=self.tenant, property_obj=self.property,
+            date_from=date(2026, 6, 20), date_to=date(2026, 6, 20), worker_ids=[self.worker.id],
+        )
+
+        self.assertNotIn("No exportar esta nota.", csv_text)
 
     def test_scheduling_page_filters_workers_by_query(self):
         Worker.objects.create(
