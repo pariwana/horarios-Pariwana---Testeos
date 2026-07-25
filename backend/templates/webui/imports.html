@@ -1,32 +1,73 @@
 {% extends "webui/base.html" %}
 {% block title %}Importaciones - Pariwana Scheduler{% endblock %}
 {% block content %}
-  <div class="grid-2" style="margin-bottom: 12px; align-items: start;">
+  <style>
+    .imports-page { display: grid; gap: 12px; }
+    .imports-upload-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: stretch; }
+    .import-upload-panel { display: flex; flex-direction: column; gap: 14px; }
+    .import-upload-panel h3 { margin: 0; }
+    .import-upload-panel .msg { margin: 0; }
+    .import-resources { display: grid; gap: 10px; }
+    .import-template-action { width: fit-content; min-height: 44px; font-weight: 700; }
+    .import-help-files { display: grid; gap: 8px; padding: 10px; border: 1px solid #e5e7eb; border-radius: 6px; background: #f8fafc; }
+    .import-help-title { color: var(--muted); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.02em; }
+    .import-help-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .import-help-actions .button { min-height: 40px; }
+    .import-form { margin-top: auto; }
+    .import-file-field { display: grid; gap: 4px; }
+    .import-file-field input[type="file"] { width: 100%; min-width: 0; padding: 7px; font-size: 13px; }
+    .import-option { display: flex; gap: 10px; align-items: center; margin: 0; color: var(--ink); font-size: 14px; line-height: 1.35; }
+    .import-option--confirm { align-items: flex-start; }
+    .import-option input[type="checkbox"] { width: 20px; height: 20px; min-width: 20px; margin: 0; accent-color: var(--accent); }
+    .import-form .primary { align-self: flex-start; min-width: 190px; }
+    .imports-recent h3 { margin: 0 0 12px; }
+    .import-batch-card { gap: 10px; }
+    .import-batch-card dl { display: grid; grid-template-columns: minmax(92px, auto) minmax(0, 1fr); gap: 6px 10px; margin: 0; font-size: 14px; }
+    .import-batch-card dt { color: var(--muted); }
+    .import-batch-card dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+    .import-batch-card .button { width: 100%; min-height: 44px; }
+    @media (max-width: 640px) {
+      .imports-upload-grid { grid-template-columns: 1fr; }
+      .import-upload-panel { gap: 12px; }
+      .import-template-action { width: 100%; }
+      .import-help-actions { display: grid; grid-template-columns: 1fr; }
+      .import-help-actions .button { min-height: 44px; }
+      .import-file-field input[type="file"] { min-height: 44px; }
+      .import-option { align-items: flex-start; }
+      .import-form .primary { width: 100%; min-height: 44px; }
+    }
+  </style>
+
+  <div class="imports-page">
+  <div class="imports-upload-grid">
     {% if can_import_workers %}
-      <section class="panel">
-        <h3 style="margin-top: 0;">Importar trabajadores (CSV/XLSX)</h3>
-        <div class="msg msg-warning" style="margin-top:0;">
+      <section class="panel import-upload-panel">
+        <h3>Importar trabajadores <span class="muted">(CSV/XLSX)</span></h3>
+        <div class="msg msg-warning">
           Esta importacion sincroniza la sede completa seleccionada. El archivo debe contener todos los trabajadores activos de la sede; quienes no aparezcan seran marcados como inactivos.
         </div>
-        <p style="margin-top: 0;">
-          <a href="/app/imports/workers-template/">Descargar plantilla XLSX de trabajadores</a>
-          <span class="muted">|</span>
-          <a href="/app/imports/workers-sample/">Muestra QA XLSX</a>
-          <span class="muted">|</span>
-          <a href="/app/imports/workers-sample/?format=csv">Muestra QA CSV</a>
-        </p>
-        <form method="post" enctype="multipart/form-data" class="stack">
+        <div class="import-resources">
+          <a class="button primary import-template-action" href="/app/imports/workers-template/">Descargar plantilla</a>
+          <div class="import-help-files">
+            <div class="import-help-title">Archivos de ayuda</div>
+            <div class="import-help-actions">
+              <a class="button" href="/app/imports/workers-sample/">Descargar ejemplo XLSX</a>
+              <a class="button" href="/app/imports/workers-sample/?format=csv">Descargar ejemplo CSV</a>
+            </div>
+          </div>
+        </div>
+        <form method="post" enctype="multipart/form-data" class="stack import-form">
           {% csrf_token %}
           <input type="hidden" name="action" value="preview_workers">
-          <div>
+          <div class="import-file-field">
             <label>Archivo</label>
             <input type="file" name="file" accept=".csv,.xlsx" required>
           </div>
-          <label style="display:flex; gap:8px; align-items:center; margin:0;">
+          <label class="import-option">
             <input type="checkbox" name="create_missing_areas" value="1">
             Crear areas faltantes automaticamente
           </label>
-          <label style="display:flex; gap:8px; align-items:flex-start; margin:0;">
+          <label class="import-option import-option--confirm">
             <input type="checkbox" name="confirm_full_sync" value="1" required>
             <span>Confirmo que este archivo contiene la lista completa de trabajadores activos de la sede seleccionada.</span>
           </label>
@@ -36,30 +77,33 @@
     {% endif %}
 
     {% if can_import_shifts %}
-      <section class="panel">
-        <h3 style="margin-top: 0;">Importar turnos por area (XLSX/CSV)</h3>
-        <div class="msg msg-warning" style="margin-top:0;">
+      <section class="panel import-upload-panel">
+        <h3>Importar turnos por área <span class="muted">(XLSX/CSV)</span></h3>
+        <div class="msg msg-warning">
           Esta importacion sincroniza la sede completa seleccionada. El archivo debe contener todos los turnos activos de la sede; los turnos ausentes quedaran inactivos para futuras asignaciones.
         </div>
-        <p style="margin-top: 0;">
-          <a href="/app/imports/shifts-template/">Descargar plantilla XLSX de turnos</a>
-          <span class="muted">|</span>
-          <a href="/app/imports/shifts-sample/">Muestra QA XLSX</a>
-          <span class="muted">|</span>
-          <a href="/app/imports/shifts-sample/?format=csv">Muestra QA CSV</a>
-        </p>
-        <form method="post" enctype="multipart/form-data" class="stack">
+        <div class="import-resources">
+          <a class="button primary import-template-action" href="/app/imports/shifts-template/">Descargar plantilla</a>
+          <div class="import-help-files">
+            <div class="import-help-title">Archivos de ayuda</div>
+            <div class="import-help-actions">
+              <a class="button" href="/app/imports/shifts-sample/">Descargar ejemplo XLSX</a>
+              <a class="button" href="/app/imports/shifts-sample/?format=csv">Descargar ejemplo CSV</a>
+            </div>
+          </div>
+        </div>
+        <form method="post" enctype="multipart/form-data" class="stack import-form">
           {% csrf_token %}
           <input type="hidden" name="action" value="preview_shifts_area">
-          <div>
+          <div class="import-file-field">
             <label>Archivo</label>
             <input type="file" name="file" accept=".csv,.xlsx" required>
           </div>
-          <label style="display:flex; gap:8px; align-items:center; margin:0;">
+          <label class="import-option">
             <input type="checkbox" name="create_missing_areas" value="1">
             Crear areas faltantes automaticamente
           </label>
-          <label style="display:flex; gap:8px; align-items:flex-start; margin:0;">
+          <label class="import-option import-option--confirm">
             <input type="checkbox" name="confirm_full_sync" value="1" required>
             <span>Confirmo que este archivo contiene la lista completa de turnos activos de la sede seleccionada.</span>
           </label>
@@ -69,10 +113,10 @@
     {% endif %}
   </div>
 
-  <section class="panel" style="margin-bottom: 12px;">
-    <h3 style="margin-top: 0;">Lotes recientes</h3>
+  <section class="panel imports-recent">
+    <h3>Lotes recientes</h3>
     {% if batches %}
-      <table>
+      <table class="desktop-table">
         <thead>
           <tr>
             <th>ID</th>
@@ -96,10 +140,27 @@
           {% endfor %}
         </tbody>
       </table>
+      <div class="mobile-cards">
+        {% for row in batches_rows %}
+          <article class="mobile-card import-batch-card">
+            <div class="mobile-card-header">
+              <div class="row-title">Lote #{{ row.batch.id }}</div>
+              <span class="badge">{{ row.status_label }}</span>
+            </div>
+            <dl>
+              <dt>Fuente</dt><dd>{{ row.source_label }}</dd>
+              <dt>Archivo</dt><dd>{{ row.batch.file_name }}</dd>
+              <dt>Fecha</dt><dd>{{ row.batch.created_at|date:"d-m-Y H:i" }}</dd>
+            </dl>
+            <a class="button" href="/app/imports/?batch_id={{ row.batch.id }}">Ver</a>
+          </article>
+        {% endfor %}
+      </div>
     {% else %}
       <p class="muted">No hay lotes creados.</p>
     {% endif %}
   </section>
 
   {% include "webui/_import_preview_modal.html" with import_modal_id="imports-preview-modal" import_title="Vista previa de importacion" import_confirm_action="confirm_batch" %}
+  </div>
 {% endblock %}
