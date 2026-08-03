@@ -1,5 +1,11 @@
 # Netlify + Supabase Setup
 
+> **HISTORICO (legado).** Este documento y el camino "frontend en Netlify +
+> Supabase Auth/API" quedaron abandonados. El producto usa Django Templates +
+> HTMX y PostgreSQL dockerizado (`docker-compose.prod.yml`). Se conserva solo
+> como referencia de lo que se evaluo. Ver `docs/production.md` para la
+> operacion actual.
+
 Este documento deja claro como conectar una version frontend en Netlify con Supabase sin exponer credenciales sensibles.
 
 ## 1. Ejecutar el query

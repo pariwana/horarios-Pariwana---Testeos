@@ -5,22 +5,49 @@
 #   docker compose -f docker-compose.prod.yml up -d
 #
 # Asume:
-#   - Base de datos PostgreSQL externa (Supabase u otro proveedor).
+#   - PostgreSQL dockerizado (servicio "db") con volumen persistente.
 #   - Nginx Proxy Manager como reverse proxy con network "npm_network".
-#   - Archivo .env en el mismo directorio con las variables de entorno.
+#   - Archivo .env en el mismo directorio con las variables de entorno
+#     (DB_NAME, DB_USER, DB_PASSWORD, DATABASE_URL, etc.).
 #
 # Para construir y desplegar:
 #   docker compose -f docker-compose.prod.yml build
 #   docker compose -f docker-compose.prod.yml up -d
+#
+# Redes:
+#   - npm_network (externa): solo el contenedor web es alcanzable por el proxy.
+#   - internal_db (interna): solo los contenedores web y db. La BD NO se
+#     expone a ningún puerto del host.
 # =============================================================================
 
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: pariwana_scheduler_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-pariwana_buk}
+      POSTGRES_USER: ${DB_USER:-pariwana}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD es obligatorio en .env}
+    volumes:
+      - pariwana_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-pariwana} -d ${DB_NAME:-pariwana_buk}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - internal_db
+
   web:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: pariwana_scheduler_web
     restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
     env_file:
       - .env
     environment:
@@ -47,11 +74,14 @@ services:
       - "8000"
     networks:
       - npm_network
+      - internal_db
 
 volumes:
   static_volume:
   media_volume:
+  pariwana_postgres_data:
 
 networks:
   npm_network:
     external: true
+  internal_db:

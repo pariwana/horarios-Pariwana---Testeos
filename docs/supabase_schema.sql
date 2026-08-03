@@ -1,4 +1,9 @@
 -- =========================================================
+-- HISTORICO (legado): esquema evaluado para Supabase.
+-- El proyecto usa hoy Django migrations + PostgreSQL dockerizado.
+-- Se conserva solo como referencia. No ejecutar.
+-- =========================================================
+-- =========================================================
 -- Pariwana Hostels - Base inicial Supabase/PostgreSQL
 -- =========================================================
 
