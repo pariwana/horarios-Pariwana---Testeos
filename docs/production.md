@@ -65,7 +65,7 @@ La base dockerizada no tiene PITR/WAL (a diferencia de Supabase). El respaldo es
 `pg_dump` programado desde el host via cron.
 
 - Script: `scripts/backup_db.sh` (debe copiarse al servidor e instalarse en cron).
-- Frecuencia: full dump diario.
+- Frecuencia: full dump diario (BD + media en un solo `.tar.gz`).
 - Retencion:
   - Diario 14 dias.
   - Semanal 8 semanas (domingos).
@@ -99,16 +99,22 @@ crontab -e
 # 1. Detener el contenedor web para evitar escrituras durante el restore
 docker stop pariwana_scheduler_web
 
-# 2. Restaurar el dump dentro del contenedor de BD (formato custom -Fc)
+# 2. Extraer el backup combinado (db.dump + media/)
+tar xzf /home/ubuntu/backups/schedules/daily/pariwana_buk_YYYYMMDD_HHMMSS.tar.gz
+
+# 3. Restaurar la BD (formato custom -Fc)
 docker exec -i pariwana_scheduler_db \
   pg_restore -U pariwana -d pariwana_buk --no-owner --no-privileges \
-  < /home/ubuntu/backups/schedules/daily/pariwana_buk_YYYYMMDD_HHMMSS.dump
+  < db.dump
 
-# 3. Verificar conteos
+# 4. Restaurar media
+docker cp media/. pariwana_scheduler_web:/app/media/
+
+# 5. Verificar conteos
 docker exec -i pariwana_scheduler_db \
   psql -U pariwana -d pariwana_buk -c "SELECT count(*) FROM users_user;"
 
-# 4. Aplicar migraciones pendientes y levantar
+# 6. Aplicar migraciones pendientes y levantar
 docker start pariwana_scheduler_web
 docker logs -f pariwana_scheduler_web
 ```
