@@ -6,6 +6,9 @@ backend/.env.*
 !backend/.env.example
 !.gitignore
 
+# Backups locales de BD (nunca commitear)
+backups/
+
 .venv/
 venv/
 env/
