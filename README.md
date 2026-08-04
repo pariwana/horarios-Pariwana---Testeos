@@ -10,7 +10,7 @@ Aplicación interna de **Pariwana Hostels** para la gestión de horarios y gener
 |------|-----------|
 | Backend | Django 5 + Django REST Framework |
 | Frontend | Django Templates + HTMX |
-| Base de datos | PostgreSQL 16 |
+| Base de datos | PostgreSQL 17 (producción) / 16 (desarrollo local) |
 | Exportación | OpenPyXL (XLSX) |
 | Reportes | ReportLab (PDF) |
 | Proxy | Nginx Proxy Manager |

@@ -13,6 +13,11 @@ El stack de desarrollo define la base en `docker-compose.yml` (servicio `db`,
 docker compose up -d db
 ```
 
+> Nota: desarrollo local usa PostgreSQL 16; producción usa PostgreSQL 17
+> (`docker-compose.prod.yml`, igual al server de Supabase 17.6 que se migró).
+> Si algún día quieres alinear local a 17: `docker compose down -v` (borra la
+> BD local) y re-restaurar el dump.
+
 - Base: `pariwana_buk`
 - Usuario: `pariwana`
 - Password: `pariwana_dev_password`

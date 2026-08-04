@@ -15,7 +15,7 @@
 
 | Antes | Después |
 |-------|---------|
-| BD externa Supabase (`pooler.supabase.com:6543`) | BD dockerizada `db` (postgres:16-alpine), red interna, sin puertos expuestos |
+| BD externa Supabase (`pooler.supabase.com:6543`) | BD dockerizada `db` (postgres:17-alpine), red interna, sin puertos expuestos |
 | `.env` con `DATABASE_URL` a Supabase + `DIRECT_URL` | `.env` con `DB_*` + `DATABASE_URL` a `db:5432` |
 | Backups con PITR de Supabase | Cron `pg_dump` diario (14d/8s/6m) vía `scripts/backup_db.sh` |
 | Credenciales Supabase commiteadas | `.env` fuera de git; password de Supabase rotada |
@@ -28,10 +28,13 @@ del cutover).
 
 ## 2) Reglas críticas (lecciones validadas en el ensayo local)
 
-1. **Match de versión de herramientas.** El dump DEBE hacerse con `pg_dump` 16
-   (contenedor `postgres:16-alpine`) y el restore con el `pg_restore` 16.13 del
-   contenedor `db`. Un dump hecho con pg_dump 18 (formato 1.16) falla con
-   `unsupported version (1.16) in file header`.
+1. **Match de versiones de herramientas.** El dump se hace contra Supabase
+   (PostgreSQL 17.6) por lo que requiere `pg_dump` **17 o mayor** (un pg_dump
+   16 aborta con `server version mismatch`). El destino del compose usa
+   `postgres:17-alpine` y el restore se hace con las herramientas **del mismo
+   contenedor (17)**, que leen el formato custom del dump 17. Regla general:
+   dump y restore con la misma familia de version, y la herramienta de dump
+   nunca mas vieja que el servidor fuente.
 2. **Restore vía `docker exec`.** El servicio `db` no expone puertos en
    producción; el restore se ejecuta dentro del contenedor.
 3. **El primer push queda en rojo (esperado y seguro).** El deploy de GitHub
@@ -82,16 +85,16 @@ cp .env .env.supabase.bak
 # 1b. Verificar disco libre
 df -h /home/ubuntu/schedules
 
-# 1c. Dump desde Supabase CON pg_dump 16 (match de versión; DIRECT_URL puerto
-#     5432, no el pooler; schema public)
+# 1c. Dump desde Supabase CON pg_dump 17 (≥ versión del server 17.6;
+#     DIRECT_URL puerto 5432, no el pooler; schema public)
 mkdir -p backups
-docker run --rm -v /home/ubuntu/schedules/backups:/backup postgres:16-alpine \
+docker run --rm -v /home/ubuntu/schedules/backups:/backup postgres:17-alpine \
   pg_dump -Fc -n public \
   "postgresql://postgres.vkpenntpkhnptiiyhhfr:Pariwana123%40@aws-1-us-west-2.pooler.supabase.com:5432/postgres?sslmode=require" \
   -f /backup/supabase_pre_cutover.dump
 
 # 1d. Referencia de conteos (anotar los resultados)
-docker run --rm postgres:16-alpine psql \
+docker run --rm postgres:17-alpine psql \
   "postgresql://postgres.vkpenntpkhnptiiyhhfr:Pariwana123%40@aws-1-us-west-2.pooler.supabase.com:5432/postgres?sslmode=require" \
   -tAc "SELECT 'workers', count(*) FROM workers_worker UNION ALL SELECT 'asignaciones', count(*) FROM scheduling_scheduleassignment UNION ALL SELECT 'usuarios', count(*) FROM users_user;"
 ```
@@ -123,7 +126,7 @@ cd /home/ubuntu/schedules
 DB_NAME=pariwana_buk DB_USER=pariwana DB_PASSWORD=<NUEVA-CLAVE> \
   docker compose -f docker-compose.prod.yml up -d db
 
-# 3b. Restore (pg_restore 16.13 del contenedor, mismo formato del dump)
+# 3b. Restore (pg_restore 17 del contenedor, mismo formato del dump)
 docker exec -i pariwana_scheduler_db pg_restore -U pariwana -d pariwana_buk \
   --no-owner --no-privileges -n public \
   < /home/ubuntu/schedules/backups/supabase_pre_cutover.dump

@@ -6,7 +6,7 @@ Este documento resume recomendaciones para desplegar y operar Pariwana BUK Sched
 - Sistema operativo: Linux (Ubuntu LTS).
 - App server: `gunicorn` sirviendo Django.
 - Reverse proxy: `nginx` (Nginx Proxy Manager) con TLS.
-- Base de datos: **PostgreSQL dockerizado** (servicio `db` de `docker-compose.prod.yml`, `postgres:16-alpine`), en red interna, sin puertos expuestos al host.
+- Base de datos: **PostgreSQL dockerizado** (servicio `db` de `docker-compose.prod.yml`, `postgres:17-alpine`), en red interna, sin puertos expuestos al host.
 - Almacenamiento de archivos: volumen local `media_volume` (si se persisten exportaciones/adjuntos).
 - Cache/colas (opcional en v1): Redis.
 
@@ -164,14 +164,14 @@ Ejecutar en produccion inmediatamente despues de desplegar:
 ## 12) Migracion desde Supabase a PostgreSQL dockerizado (runbook)
 
 > **Documento operativo completo:** [cutover_supabase_a_postgres.md](cutover_supabase_a_postgres.md)
-> Contiene las fases 0-5 con comandos exactos: prep en servidor, dump v16,
+> Contiene las fases 0-5 con comandos exactos: prep en servidor, dump v17,
 > push con CI rojo esperado, restore via `docker exec`, switch del secreto
 > `DEPLOY_ENV_FILE`, rollback y post-cutover.
 
 Resumen del procedimiento (detalle en el runbook):
 
 1. **Fase 1 (servidor, antes del push):** backup de `.env` (`.env.supabase.bak`),
-   `df -h`, dump con `pg_dump` 16 (`-Fc -n public`, DIRECT_URL puerto 5432) y
+   `df -h`, dump con `pg_dump` 17 (`-Fc -n public`, DIRECT_URL puerto 5432) y
    conteos de referencia.
 2. **Fase 2:** push a main. El job de deploy queda en ROJO (esperado y seguro):
    `up -d` falla por `DB_PASSWORD` ausente; web sigue en Supabase.
@@ -184,7 +184,8 @@ Resumen del procedimiento (detalle en el runbook):
    `*.supabase.co` de `ALLOWED_HOSTS`.
 
 Reglas criticas:
-- Dump y restore con herramientas PostgreSQL **16** (match de version).
+- Dump con herramientas **17 o mayor** (≥ versión del server Supabase 17.6) y
+  restore con el contenedor `db` (postgres:17).
 - Restore via `docker exec` (la BD no expone puertos).
 - Errores de roles/schemas de Supabase en el restore: esperados e inofensivos.
 - Rollback: `cp .env.supabase.bak .env && docker compose ... up -d web`.
