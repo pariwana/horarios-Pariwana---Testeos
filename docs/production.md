@@ -75,13 +75,21 @@ La base dockerizada no tiene PITR/WAL (a diferencia de Supabase). El respaldo es
 
 ### Instalacion del backup en el servidor
 
+Los backups viven fuera del proyecto (`/home/ubuntu/backups/schedules`), para no
+mezclarlos con el directorio que se actualiza en cada deploy.
+
 ```bash
-mkdir -p /home/ubuntu/schedules/scripts /home/ubuntu/schedules/backups
-cp scripts/backup_db.sh /home/ubuntu/schedules/scripts/
-chmod +x /home/ubuntu/schedules/scripts/backup_db.sh
-# Cron (ejemplo: 03:30 UTC-5 todos los dias)
+# 1. Directorio de backups (fuera del proyecto, propiedad del usuario deploy)
+sudo mkdir -p /home/ubuntu/backups/schedules
+sudo chown ubuntu:ubuntu /home/ubuntu/backups/schedules
+
+# 2. Copiar el script (desde el repo local o directo desde GitHub)
+scp scripts/backup_db.sh ubuntu@<server>:~/
+ssh ubuntu@<server> 'mkdir -p ~/scripts && mv ~/backup_db.sh ~/scripts/ && chmod +x ~/scripts/backup_db.sh'
+
+# 3. Cron (ejemplo: 03:30 UTC-5 todos los dias)
 crontab -e
-30 3 * * * /home/ubuntu/schedules/scripts/backup_db.sh >> /home/ubuntu/schedules/backups/backup.log 2>&1
+30 3 * * * /home/ubuntu/scripts/backup_db.sh >> /home/ubuntu/backups/schedules/backup.log 2>&1
 ```
 
 ### Restore (runbook)
@@ -93,7 +101,7 @@ docker stop pariwana_scheduler_web
 # 2. Restaurar el dump dentro del contenedor de BD (formato custom -Fc)
 docker exec -i pariwana_scheduler_db \
   pg_restore -U pariwana -d pariwana_buk --no-owner --no-privileges \
-  < /home/ubuntu/schedules/backups/db/daily/pariwana_buk_YYYYMMDD_HHMMSS.dump
+  < /home/ubuntu/backups/schedules/daily/pariwana_buk_YYYYMMDD_HHMMSS.dump
 
 # 3. Verificar conteos
 docker exec -i pariwana_scheduler_db \
