@@ -296,6 +296,7 @@ npm test
 - [Setup local](docs/setup.md)
 - [Formato de exportación BUK](docs/buk_export_format.md)
 - [Producción y operación](docs/production.md)
+- [Runbook: migración Supabase → PostgreSQL dockerizado](docs/cutover_supabase_a_postgres.md)
 - [Modelo de base de datos](docs/database_schema.md)
 - [Permisos](docs/permissions.md)
 - [Netlify + Supabase](docs/netlify_supabase_setup.md) (histórico/legado)
