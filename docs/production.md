@@ -83,13 +83,14 @@ mezclarlos con el directorio que se actualiza en cada deploy.
 sudo mkdir -p /home/ubuntu/backups/schedules
 sudo chown ubuntu:ubuntu /home/ubuntu/backups/schedules
 
-# 2. Copiar el script (desde el repo local o directo desde GitHub)
-scp scripts/backup_db.sh ubuntu@<server>:~/
-ssh ubuntu@<server> 'mkdir -p ~/scripts && mv ~/backup_db.sh ~/scripts/ && chmod +x ~/scripts/backup_db.sh'
+# 2. Actualizar el script (el CI no copia scripts; vive en ~/schedules/scripts)
+curl -fsSL -o /home/ubuntu/schedules/scripts/backup_db.sh \
+  https://raw.githubusercontent.com/pariwana/horarios-Pariwana---Testeos/main/scripts/backup_db.sh
+chmod +x /home/ubuntu/schedules/scripts/backup_db.sh
 
 # 3. Cron (ejemplo: 03:30 UTC-5 todos los dias)
 crontab -e
-30 3 * * * /home/ubuntu/scripts/backup_db.sh >> /home/ubuntu/backups/schedules/backup.log 2>&1
+30 3 * * * /home/ubuntu/schedules/scripts/backup_db.sh >> /home/ubuntu/backups/schedules/backup.log 2>&1
 ```
 
 ### Restore (runbook)

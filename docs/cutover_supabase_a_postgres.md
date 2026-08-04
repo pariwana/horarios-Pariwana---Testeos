@@ -215,14 +215,15 @@ docker compose -f docker-compose.prod.yml -f docker-compose.deploy.yml up -d web
    sudo mv /home/ubuntu/schedules/backups/supabase_pre_cutover.dump /home/ubuntu/backups/schedules/
    sudo chown -R ubuntu:ubuntu /home/ubuntu/backups
 
-   # descargar el script y dejarlo fuera del proyecto
-   curl -fsSL -o /home/ubuntu/scripts/backup_db.sh \
+   # descargar/actualizar el script (vive en ~/schedules/scripts, se conserva
+   # entre deploys porque el CI solo copia compose + .env)
+   curl -fsSL -o /home/ubuntu/schedules/scripts/backup_db.sh \
      https://raw.githubusercontent.com/pariwana/horarios-Pariwana---Testeos/main/scripts/backup_db.sh
-   chmod +x /home/ubuntu/scripts/backup_db.sh
-   /home/ubuntu/scripts/backup_db.sh   # prueba manual (primer backup)
+   chmod +x /home/ubuntu/schedules/scripts/backup_db.sh
+   /home/ubuntu/schedules/scripts/backup_db.sh   # prueba manual (primer backup)
 
    crontab -e
-   # línea: 30 3 * * * /home/ubuntu/scripts/backup_db.sh >> /home/ubuntu/backups/schedules/backup.log 2>&1
+   # línea: 30 3 * * * /home/ubuntu/schedules/scripts/backup_db.sh >> /home/ubuntu/backups/schedules/backup.log 2>&1
    ```
    Retención: diario 14 días, semanal 8 semanas, mensual 6 meses. Probar un
    restore al menos 1 vez al mes.
