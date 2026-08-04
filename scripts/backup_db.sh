@@ -7,12 +7,14 @@
 #   - weekly : 8 semanas  (domingos)
 #   - monthly: 6 meses    (dia 1 de cada mes)
 #
-# Instalacion en el servidor:
-#   1. cp scripts/backup_db.sh /home/ubuntu/scripts/  (o curl del repo)
-#   2. chmod +x /home/ubuntu/scripts/backup_db.sh
+# Instalacion en el servidor (el CI no copia scripts; los backups SI viven
+# fuera del proyecto, en /home/ubuntu/backups/schedules):
+#   1. curl -fsSL -o /home/ubuntu/schedules/scripts/backup_db.sh \
+#        https://raw.githubusercontent.com/pariwana/horarios-Pariwana---Testeos/main/scripts/backup_db.sh
+#   2. chmod +x /home/ubuntu/schedules/scripts/backup_db.sh
 #   3. Cron (como usuario deploy):
 #        crontab -e
-#        30 3 * * * /home/ubuntu/scripts/backup_db.sh >> /home/ubuntu/backups/schedules/backup.log 2>&1
+#        30 3 * * * /home/ubuntu/schedules/scripts/backup_db.sh >> /home/ubuntu/backups/schedules/backup.log 2>&1
 #
 # Restore:
 #   docker exec -i pariwana_scheduler_db pg_restore -U pariwana -d pariwana_buk \
