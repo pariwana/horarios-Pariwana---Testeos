@@ -67,6 +67,9 @@ jobs:
         env:
           SECRET_KEY: test-key
           DATABASE_URL: postgresql://pariwana:pariwana_test@localhost:5432/pariwana_buk
+          # backend/.env ya no se commitea; ALLOWED_HOSTS debe definirse en CI
+          # (smoke_test_webui resuelve el host desde ALLOWED_HOSTS)
+          ALLOWED_HOSTS: localhost,127.0.0.1
 
   build:
     name: Build and push image
