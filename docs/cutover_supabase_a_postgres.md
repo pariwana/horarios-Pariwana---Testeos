@@ -87,8 +87,8 @@ df -h /home/ubuntu/schedules
 
 # 1c. Dump desde Supabase CON pg_dump 17 (≥ versión del server 17.6;
 #     DIRECT_URL puerto 5432, no el pooler; schema public)
-mkdir -p backups
-docker run --rm -v /home/ubuntu/schedules/backups:/backup postgres:17-alpine \
+mkdir -p /home/ubuntu/backups/schedules
+docker run --rm -v /home/ubuntu/backups/schedules:/backup postgres:17-alpine \
   pg_dump -Fc -n public \
   "postgresql://postgres.vkpenntpkhnptiiyhhfr:Pariwana123%40@aws-1-us-west-2.pooler.supabase.com:5432/postgres?sslmode=require" \
   -f /backup/supabase_pre_cutover.dump
@@ -100,7 +100,7 @@ docker run --rm postgres:17-alpine psql \
 ```
 
 **Criterios para continuar:** dump terminado sin errores, archivo presente
-(`ls -lh backups/supabase_pre_cutover.dump`) y disco con espacio. En caso
+(`ls -lh /home/ubuntu/backups/schedules/supabase_pre_cutover.dump`) y disco con espacio. En caso
 contrario, detenerse y resolver antes de seguir.
 
 ---
@@ -129,7 +129,7 @@ DB_NAME=pariwana_buk DB_USER=pariwana DB_PASSWORD=<NUEVA-CLAVE> \
 # 3b. Restore (pg_restore 17 del contenedor, mismo formato del dump)
 docker exec -i pariwana_scheduler_db pg_restore -U pariwana -d pariwana_buk \
   --no-owner --no-privileges -n public \
-  < /home/ubuntu/schedules/backups/supabase_pre_cutover.dump
+  < /home/ubuntu/backups/schedules/supabase_pre_cutover.dump
 
 # 3c. Validar conteos restaurados (comparar con la referencia de la Fase 1)
 docker exec -i pariwana_scheduler_db psql -U pariwana -d pariwana_buk \
@@ -208,12 +208,21 @@ docker compose -f docker-compose.prod.yml -f docker-compose.deploy.yml up -d web
 
 ## 10) Fase 5 — Post-cutover (cuando todo esté estable, no antes)
 
-1. **Instalar backups** (el CI no copia scripts al servidor):
+1. **Instalar backups** (el CI no copia scripts al servidor; los backups viven
+   en `/home/ubuntu/backups/schedules`, fuera del directorio del deploy):
    ```bash
-   scp scripts/backup_db.sh <user>@<server>:/home/ubuntu/schedules/scripts/
-   ssh <user>@<server> 'chmod +x /home/ubuntu/schedules/scripts/backup_db.sh'
-   ssh <user>@<server> 'crontab -e'
-   # línea: 30 3 * * * /home/ubuntu/schedules/scripts/backup_db.sh >> /home/ubuntu/schedules/backups/backup.log 2>&1
+   # (opcional) mover el dump de la Fase 1 si quedó en ~/schedules/backups
+   sudo mv /home/ubuntu/schedules/backups/supabase_pre_cutover.dump /home/ubuntu/backups/schedules/
+   sudo chown -R ubuntu:ubuntu /home/ubuntu/backups
+
+   # descargar el script y dejarlo fuera del proyecto
+   curl -fsSL -o /home/ubuntu/scripts/backup_db.sh \
+     https://raw.githubusercontent.com/pariwana/horarios-Pariwana---Testeos/main/scripts/backup_db.sh
+   chmod +x /home/ubuntu/scripts/backup_db.sh
+   /home/ubuntu/scripts/backup_db.sh   # prueba manual (primer backup)
+
+   crontab -e
+   # línea: 30 3 * * * /home/ubuntu/scripts/backup_db.sh >> /home/ubuntu/backups/schedules/backup.log 2>&1
    ```
    Retención: diario 14 días, semanal 8 semanas, mensual 6 meses. Probar un
    restore al menos 1 vez al mes.

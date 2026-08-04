@@ -8,11 +8,11 @@
 #   - monthly: 6 meses    (dia 1 de cada mes)
 #
 # Instalacion en el servidor:
-#   1. Copiar a /home/ubuntu/schedules/scripts/backup_db.sh
-#   2. chmod +x scripts/backup_db.sh
-#   3. Cron (como root o deploy):
+#   1. cp scripts/backup_db.sh /home/ubuntu/scripts/  (o curl del repo)
+#   2. chmod +x /home/ubuntu/scripts/backup_db.sh
+#   3. Cron (como usuario deploy):
 #        crontab -e
-#        30 3 * * * /home/ubuntu/schedules/scripts/backup_db.sh >> /home/ubuntu/schedules/backups/backup.log 2>&1
+#        30 3 * * * /home/ubuntu/scripts/backup_db.sh >> /home/ubuntu/backups/schedules/backup.log 2>&1
 #
 # Restore:
 #   docker exec -i pariwana_scheduler_db pg_restore -U pariwana -d pariwana_buk \
@@ -23,7 +23,7 @@ set -euo pipefail
 DB_CONTAINER="${DB_CONTAINER:-pariwana_scheduler_db}"
 DB_NAME="${DB_NAME:-pariwana_buk}"
 DB_USER="${DB_USER:-pariwana}"
-BACKUP_ROOT="${BACKUP_ROOT:-/home/ubuntu/schedules/backups/db}"
+BACKUP_ROOT="${BACKUP_ROOT:-/home/ubuntu/backups/schedules}"
 DAILY_KEEP="${DAILY_KEEP:-14}"      # dias
 WEEKLY_KEEP="${WEEKLY_KEEP:-8}"     # semanas
 MONTHLY_KEEP="${MONTHLY_KEEP:-6}"   # meses
