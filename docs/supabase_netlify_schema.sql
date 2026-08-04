@@ -1,4 +1,8 @@
 -- =========================================================
+-- HISTORICO (legado): esquema para el camino Netlify + Supabase,
+-- abandonado. El proyecto usa hoy Django migrations + PostgreSQL
+-- dockerizado. Se conserva solo como referencia. No ejecutar.
+-- =========================================================
 -- Pariwana BUK Scheduler - Supabase schema for Netlify clients
 -- =========================================================
 -- Run this file in the Supabase SQL Editor.

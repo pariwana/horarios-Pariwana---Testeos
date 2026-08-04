@@ -1,4 +1,14 @@
-# .env
+# Archivos de entorno con credenciales (nunca commitear)
+.env
+backend/.env
+backend/.env.*
+!.env.example
+!backend/.env.example
+!.gitignore
+
+# Backups locales de BD (nunca commitear)
+backups/
+
 .venv/
 venv/
 env/

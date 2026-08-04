@@ -10,7 +10,7 @@ Aplicación interna de **Pariwana Hostels** para la gestión de horarios y gener
 |------|-----------|
 | Backend | Django 5 + Django REST Framework |
 | Frontend | Django Templates + HTMX |
-| Base de datos | PostgreSQL 16 |
+| Base de datos | PostgreSQL 17 (producción) / 16 (desarrollo local) |
 | Exportación | OpenPyXL (XLSX) |
 | Reportes | ReportLab (PDF) |
 | Proxy | Nginx Proxy Manager |
@@ -21,12 +21,13 @@ Aplicación interna de **Pariwana Hostels** para la gestión de horarios y gener
 ##  Arquitectura
 
 ```
-Usuario → Nginx Proxy Manager (npm_network) → Django (Gunicorn) → PostgreSQL
+Usuario → Nginx Proxy Manager (npm_network) → Django (Gunicorn) → PostgreSQL (servicio "db" del compose)
 ```
 
 - El servidor corre **Nginx Proxy Manager** con una red externa llamada `npm_network`.
 - El contenedor de Django se conecta a `npm_network` y es accesible por el proxy.
-- La base de datos PostgreSQL es externa (recomendado: Supabase).
+- La base de datos es **PostgreSQL dockerizado** (servicio `db` del compose), en red
+  interna sin puertos expuestos al host.
 
 ---
 
@@ -53,10 +54,12 @@ Usuario → Nginx Proxy Manager (npm_network) → Django (Gunicorn) → PostgreS
 │   ├── docker-entrypoint.sh
 │   └── manage.py
 ├── docs/                      # Documentación técnica
-├── public/                    # Archivos estáticos para frontend desacoplado
+├── public/                    # Archivos estáticos para frontend desacoplado (legado)
+├── scripts/                   # Scripts operativos (backup_db.sh)
 ├── .env.example               # Template de variables de entorno
 ├── docker-compose.yml         # Docker Compose para desarrollo
-├── docker-compose.prod.yml    # Docker Compose para producción
+├── docker-compose.prod.yml    # Docker Compose para producción (incluye PostgreSQL)
+├── docker-compose.deploy.yml  # Override de deploy (imagen ghcr.io)
 ├── backend/requirements.txt   # Dependencias Python (único source de verdad)
 └── netlify.toml               # Configuración Netlify (frontend alternativo)
 ```
@@ -74,8 +77,8 @@ Solo estas variables se usan realmente. Referencia cruzada: `backend/config/sett
 | `ENVIRONMENT` | ❌ (default `development`) | Entorno actual |
 | `ALLOWED_HOSTS` | ✅ | Hosts/dominios permitidos (separados por coma) |
 | `CSRF_TRUSTED_ORIGINS` | ✅ | Orígenes confiables para CSRF (separados por coma, ej: `https://.tudominio.com,https://localhost`) |
-| `DATABASE_URL` | ✅ | URL completa de PostgreSQL |
-| `DIRECT_URL` | ❌ | Conexión directa a PostgreSQL (sin PgBouncer) |
+| `DATABASE_URL` | ✅ | URL completa de PostgreSQL (host `db` en el compose; sin `?pgbouncer=true`) |
+| `DB_NAME` / `DB_USER` / `DB_PASSWORD` / `DB_HOST` / `DB_PORT` | ✅ | Credenciales de la BD dockerizada (deben coincidir con `DATABASE_URL`); las usa el servicio `db` y el wait del entrypoint |
 | `TIME_ZONE` | ❌ (default `America/Lima`) | Zona horaria |
 | `BUK_EXPORT_DEFAULT_FORMAT` | ❌ (default `xlsx`) | Formato de exportación BUK |
 | `BUK_DEFAULT_SHEET_NAME` | ❌ (default `Reporte carga BUK`) | Nombre de hoja del XLSX |
@@ -98,6 +101,9 @@ cp .env.example .env
 docker compose up -d
 ```
 
+> `docker-compose.yml` levanta Postgres 16 (`db`, puerto host `5434`) y la app en `localhost:5000`.
+> Para correr Django fuera de Docker, `backend/.env` ya apunta a `localhost:5434` (ver `docs/setup.md`).
+
 ### Sin Docker
 
 ```bash
@@ -108,6 +114,7 @@ pip install -r backend/requirements.txt
 cp backend/.env.example backend/.env
 # Editar backend/.env (backend lee su propio .env, no el raíz)
 
+# Requiere un PostgreSQL accesible (ej: docker compose up -d db)
 python manage.py migrate
 python manage.py create_initial_super_admin --email admin@pariwana.com --password <password>
 python manage.py seed_initial_pariwana
@@ -155,9 +162,13 @@ DEBUG=False
 ENVIRONMENT=production
 ALLOWED_HOSTS=.tudominio.com,localhost
 CSRF_TRUSTED_ORIGINS=https://.tudominio.com,https://localhost
-# Usar puerto 5432 directo (sin PgBouncer). NO usar ?pgbouncer=true
-DATABASE_URL=postgresql://usuario:password@host:5432/pariwana_buk?sslmode=require
-DIRECT_URL=
+# PostgreSQL dockerizado (servicio "db" del compose). NO usar ?pgbouncer=true
+DB_NAME=pariwana_buk
+DB_USER=pariwana
+DB_PASSWORD=<generar clave fuerte>
+DB_HOST=db
+DB_PORT=5432
+DATABASE_URL=postgresql://pariwana:<generar clave fuerte>@db:5432/pariwana_buk
 TIME_ZONE=America/Lima
 BUK_EXPORT_DEFAULT_FORMAT=xlsx
 BUK_DEFAULT_SHEET_NAME=Reporte carga BUK
@@ -285,9 +296,10 @@ npm test
 - [Setup local](docs/setup.md)
 - [Formato de exportación BUK](docs/buk_export_format.md)
 - [Producción y operación](docs/production.md)
+- [Runbook: migración Supabase → PostgreSQL dockerizado](docs/cutover_supabase_a_postgres.md)
 - [Modelo de base de datos](docs/database_schema.md)
 - [Permisos](docs/permissions.md)
-- [Netlify + Supabase](docs/netlify_supabase_setup.md)
+- [Netlify + Supabase](docs/netlify_supabase_setup.md) (histórico/legado)
 
 ---
 

@@ -1,3 +1,6 @@
+# LEGADO: configuracion de despliegue Netlify para el frontend SPA abandonado
+# (Netlify + Supabase, ver docs/netlify_supabase_setup.md - historico).
+# El producto actual es Django Templates + HTMX. Se conserva como referencia.
 # Configuración de despliegue para Netlify (para el Frontend SPA)
 [build]
   command = "npm run build"

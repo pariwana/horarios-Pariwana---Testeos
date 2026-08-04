@@ -2,13 +2,38 @@
 
 ## Requisitos
 - Python 3.12+
-- PostgreSQL 15+
+- Docker + Docker Compose (recomendado, ver abajo)
+- PostgreSQL 15+ (solo si no usas Docker)
+
+## Base de datos (PostgreSQL dockerizado)
+El stack de desarrollo define la base en `docker-compose.yml` (servicio `db`,
+`postgres:16-alpine`, expuesto en el host en el puerto `5434`):
+
+```bash
+docker compose up -d db
+```
+
+> Nota: desarrollo local usa PostgreSQL 16; producción usa PostgreSQL 17
+> (`docker-compose.prod.yml`, igual al server de Supabase 17.6 que se migró).
+> Si algún día quieres alinear local a 17: `docker compose down -v` (borra la
+> BD local) y re-restaurar el dump.
+
+- Base: `pariwana_buk`
+- Usuario: `pariwana`
+- Password: `pariwana_dev_password`
+- Host/port local: `localhost:5434`
+
+> Se migró desde Supabase a PostgreSQL dockerizado. Ya no se usa Supabase en
+> desarrollo ni en producción (ver `docs/production.md`). Los archivos
+> `docs/supabase_schema.sql` y `docs/netlify_supabase_setup.md` quedan como
+> referencia histórica del camino abandonado.
 
 ## Backend
 1. Crear entorno virtual.
 2. Instalar dependencias:
    - `pip install -r backend/requirements.txt`
-3. Crear `backend/.env` a partir de [backend/.env.example](</C:/Users/frazz/OneDrive/Documentos/App de RRHH Pariwana/backend/.env.example>).
+3. Crear `backend/.env` a partir de [backend/.env.example](backend/.env.example).
+   - Apunta por defecto a `postgresql://pariwana:pariwana_dev_password@localhost:5434/pariwana_buk`.
 4. Ejecutar migraciones:
    - `python manage.py migrate`
 5. Crear super admin inicial:

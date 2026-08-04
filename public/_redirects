@@ -1,1 +1,3 @@
+# LEGADO: configuracion Netlify del frontend SPA abandonado (Netlify + Supabase).
+# El producto actual es Django Templates + HTMX. Se conserva como referencia historica.
 /* /index.html 200
