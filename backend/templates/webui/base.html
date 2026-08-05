@@ -49,6 +49,8 @@
     .nav-context-switcher { margin: 4px 10px 8px; }
     .nav-context-switcher label { color: #cbd5e1; }
     .nav-context-switcher select { width: 100%; min-width: 0; }
+    .mobile-nav-property-switcher { display: none; }
+    .mobile-property-summary { display: none; }
     .main { padding: 16px; }
     .topbar { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 12px; display: flex; align-items: end; gap: 16px; flex-wrap: wrap; }
     .topbar form { display: flex; gap: 8px; flex-wrap: wrap; align-items: end; margin: 0; }
@@ -148,12 +150,12 @@
       .layout, .main, .sidebar, .panel, .page-header, .mobile-card, .modal-body { max-width: 100%; min-width: 0; }
       .main > *, .panel > *, form, details, summary { max-width: 100%; min-width: 0; }
       .main { padding: 10px; }
-      .topbar { align-items: stretch; }
-      .topbar { gap: 12px; }
-      .topbar-context, .topbar-context-form { width: 100%; }
-      .topbar-context-form { display: grid; grid-template-columns: 1fr; gap: 8px; }
+      .topbar { align-items: stretch; gap: 0; background: transparent; border: 0; padding: 0; margin-bottom: 10px; }
+      .topbar-context { display: none; }
+      .mobile-property-summary { display: block; width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 700; }
       .topbar-user-actions { display: none; }
-      .topbar-context-form > div,
+      .mobile-nav-property-switcher { display: flex; align-items: center; gap: 8px; margin: 8px 10px 10px; padding: 0; }
+      .mobile-nav-property-switcher select,
       .topbar button,
       select,
       input[type="text"],
@@ -163,6 +165,8 @@
       input[type="time"],
       input[type="number"],
       input[type="file"] { width: 100%; min-width: 0; }
+      .mobile-nav-property-switcher select { flex: 1 1 auto; width: auto; }
+      .mobile-nav-property-switcher button { flex: 0 0 auto; width: auto; min-width: 88px; padding-left: 10px; padding-right: 10px; }
       .panel { padding: 12px; border-radius: 6px; }
       .kpi { font-size: 22px; }
       table { min-width: 0; }
@@ -197,6 +201,18 @@
         </button>
       </div>
       <nav class="nav" id="main-nav">
+        {% if show_property_selector %}
+          <form method="post" action="/app/context/" class="mobile-nav-property-switcher">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{{ request.path }}">
+            <select id="mobile-property-switcher" name="property_id" aria-label="Sede">
+              {% for property in property_options %}
+                <option value="{{ property.id }}" {% if selected_property and selected_property.id == property.id %}selected{% endif %}>{{ property.name }}</option>
+              {% endfor %}
+            </select>
+            <button class="primary" type="submit">Aplicar</button>
+          </form>
+        {% endif %}
         {% for item in nav_items %}
           {% if item.children %}
             <details class="nav-group {% if item.active %}active{% endif %}" {% if item.active %}open{% endif %}>
@@ -253,6 +269,9 @@
     </aside>
     <main class="main">
       <div class="topbar">
+        {% if selected_property %}
+          <div class="mobile-property-summary">Sede: {{ selected_property.name }}</div>
+        {% endif %}
         <div class="topbar-context">
           <form method="post" action="/app/context/" class="topbar-context-form">
           {% csrf_token %}
