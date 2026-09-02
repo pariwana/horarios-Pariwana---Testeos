@@ -1817,6 +1817,7 @@ def scheduling_page(request):
     month_raw = str(request.GET.get("month", "")).strip()
     worker_query = str(request.GET.get("worker_q", "")).strip()
     focus_date_raw = str(request.GET.get("focus_date", "")).strip()
+    is_mobile_date_picker = request.GET.get("mobile_date_picker") == "1"
     edited_worker_id_raw = str(request.GET.get("edited_worker_id", "")).strip()
     edited_date_raw = str(request.GET.get("edited_date", "")).strip()
     today = date.today()
@@ -1834,6 +1835,9 @@ def scheduling_page(request):
             parsed_focus_date = date.fromisoformat(focus_date_raw)
         except ValueError:
             parsed_focus_date = None
+        if parsed_focus_date and is_mobile_date_picker:
+            year, month = parsed_focus_date.year, parsed_focus_date.month
+            month_raw = f"{year:04d}-{month:02d}"
         if parsed_focus_date and parsed_focus_date.year == year and parsed_focus_date.month == month:
             focus_date = parsed_focus_date
             focus_date_value = parsed_focus_date.isoformat()
