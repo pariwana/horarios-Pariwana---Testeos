@@ -1702,8 +1702,9 @@
         </div>
         <form method="get" action="/app/scheduling/" class="mobile-date-picker">
           <label for="mobile-focus-date">Seleccionar fecha</label>
-          <input id="mobile-focus-date" type="date" name="focus_date" value="{{ selected_date_value }}" min="{{ month_value }}-01" max="{{ month_value }}-{{ days|length|stringformat:'02d' }}" onchange="this.form.submit()">
+          <input id="mobile-focus-date" type="date" name="focus_date" value="{{ selected_date_value }}" onchange="this.form.submit()">
           <input type="hidden" name="month" value="{{ month_value }}">
+          <input type="hidden" name="mobile_date_picker" value="1">
           {% if selected_area_id %}<input type="hidden" name="area_id" value="{{ selected_area_id }}">{% endif %}
           {% if worker_query %}<input type="hidden" name="worker_q" value="{{ worker_query }}">{% endif %}
         </form>

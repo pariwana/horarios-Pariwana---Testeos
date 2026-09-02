@@ -2237,6 +2237,27 @@ class WebUiSchedulingTests(TestCase):
         self.assertContains(response, "focus_date=2026-06-14")
         self.assertContains(response, "focus_date=2026-06-16")
 
+    def test_scheduling_mobile_date_picker_changes_month_for_selected_date(self):
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["ui_tenant_id"] = self.tenant.id
+        session["ui_property_id"] = self.property.id
+        session.save()
+
+        response = self.client.get(
+            reverse("webui-scheduling"),
+            {
+                "month": "2026-06",
+                "focus_date": "2026-07-01",
+                "mobile_date_picker": "1",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["month_value"], "2026-07")
+        self.assertEqual(response.context["selected_date_value"], "2026-07-01")
+        self.assertContains(response, 'name="mobile_date_picker" value="1"')
+
     def test_scheduling_page_keeps_super_admin_context_in_advanced_options(self):
         super_admin = User.objects.create_user(
             email="scheduling-super@pariwana.test",
